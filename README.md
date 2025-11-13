@@ -34,6 +34,43 @@ RaceIQ Pro is an AI-powered racing analytics platform that transforms raw teleme
 - **Data Pipeline**: Automated ETL from raw telemetry to actionable insights
 - **Export Capabilities**: Reports and visualizations for team review
 
+## Advanced Features
+
+### SHAP Explainability
+Understand **WHY** anomalies were detected with feature importance analysis powered by SHAP (SHapley Additive exPlanations). Get detailed breakdowns showing which telemetry factors (speed, braking, throttle, etc.) contributed most to performance issues.
+
+**Benefits:**
+- Transparent AI decisions - see exactly what triggered each anomaly
+- Feature importance rankings - know which factors matter most
+- Actionable insights - focus on the right improvements
+
+### Bayesian Uncertainty Quantification
+Get confidence intervals on strategic recommendations: "90% confident: pit window laps 13-17"
+
+**Benefits:**
+- Statistical rigor - know how certain your strategy recommendations are
+- Risk assessment - understand the uncertainty in predictions
+- Multiple confidence levels - view 80%, 90%, and 95% intervals
+- Probabilistic forecasting - see the full distribution, not just point estimates
+
+### Weather Integration
+Real-time track condition adjustments for tire degradation and lap times based on temperature, humidity, wind, and precipitation.
+
+**Benefits:**
+- Hot track (>40°C): +10-20% tire degradation - adjust pit strategy earlier
+- Cold track (<25°C): -5-10% degradation - extend stint lengths
+- Rain conditions: +10% lap times - recalculate race pace
+- Weather-aware recommendations - factor real-world conditions into every decision
+
+### Interactive Track Map Visualization
+Stunning visual overlays showing performance heatmaps on actual track layouts.
+
+**Benefits:**
+- Color-coded sections (red=slow, green=fast) - instantly see problem areas
+- Interactive maps - click sections for detailed breakdowns
+- Driver comparisons - overlay multiple drivers on the same map
+- Track layouts for Barber, COTA, Sonoma, and more
+
 ## Installation
 
 ### Prerequisites
