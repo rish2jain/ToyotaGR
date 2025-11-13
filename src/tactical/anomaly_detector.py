@@ -16,6 +16,12 @@ try:
 except ImportError:
     SKLEARN_AVAILABLE = False
 
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP_AVAILABLE = False
+
 
 class AnomalyDetector:
     """
@@ -28,6 +34,9 @@ class AnomalyDetector:
     def __init__(self):
         """Initialize the AnomalyDetector."""
         self.anomalies_detected: List[Dict[str, Any]] = []
+        self.isolation_forest_model = None
+        self.feature_names = None
+        self.shap_explainer = None
 
     def detect_statistical_anomalies(
         self,
@@ -207,6 +216,10 @@ class AnomalyDetector:
         result_df['is_anomaly'] = predictions
         result_df['anomaly_score'] = scores
 
+        # Store model and features for SHAP explanations
+        self.isolation_forest_model = iso_forest
+        self.feature_names = features
+
         return result_df
 
     def classify_anomaly_type(
@@ -367,3 +380,238 @@ class AnomalyDetector:
             raise ValueError("Data does not contain anomaly_count column. Run detection first.")
 
         return anomaly_data[anomaly_data['anomaly_count'] >= min_anomaly_count].copy()
+
+    def explain_anomaly(
+        self,
+        anomaly_data: pd.Series,
+        telemetry_features: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate SHAP-based explanation for a single anomaly.
+
+        Uses SHAP TreeExplainer to identify which features contributed most
+        to the anomaly detection and provides human-readable explanations.
+
+        Args:
+            anomaly_data: Single row of telemetry data (as Series) with anomaly
+            telemetry_features: List of feature names to explain. If None, uses stored features.
+
+        Returns:
+            Dictionary containing:
+            - top_features: List of dicts with feature name, contribution, and direction
+            - explanation: Human-readable explanation string
+            - shap_values: Array of SHAP values for all features
+            - confidence: Confidence score based on anomaly score
+
+        Raises:
+            ImportError: If SHAP is not installed
+            ValueError: If model hasn't been trained yet
+
+        Example:
+            >>> detector = AnomalyDetector()
+            >>> result_df = detector.detect_pattern_anomalies(telemetry_df)
+            >>> anomaly_row = result_df[result_df['is_anomaly'] == -1].iloc[0]
+            >>> explanation = detector.explain_anomaly(anomaly_row)
+            >>> print(explanation['explanation'])
+        """
+        if not SHAP_AVAILABLE:
+            raise ImportError(
+                "SHAP is required for anomaly explanations. "
+                "Install it with: pip install shap"
+            )
+
+        if self.isolation_forest_model is None:
+            raise ValueError(
+                "No trained model found. Run detect_pattern_anomalies() first."
+            )
+
+        # Use stored feature names if not provided
+        if telemetry_features is None:
+            telemetry_features = self.feature_names
+
+        if telemetry_features is None:
+            raise ValueError("No features available for explanation")
+
+        # Extract feature values for this anomaly
+        try:
+            feature_values = anomaly_data[telemetry_features].values.reshape(1, -1)
+        except KeyError as e:
+            raise ValueError(f"Missing features in anomaly data: {e}")
+
+        # Handle missing values
+        feature_df = pd.DataFrame(feature_values, columns=telemetry_features)
+        feature_df = feature_df.fillna(feature_df.median())
+
+        # Create SHAP explainer if not already created
+        if self.shap_explainer is None:
+            try:
+                # Use TreeExplainer for Isolation Forest
+                self.shap_explainer = shap.TreeExplainer(self.isolation_forest_model)
+            except Exception as e:
+                # Fallback to KernelExplainer if TreeExplainer fails
+                import warnings
+                warnings.warn(
+                    f"TreeExplainer failed ({e}), using KernelExplainer (slower)"
+                )
+                # Sample background data (use first 100 samples or less)
+                background_size = min(100, len(feature_df))
+                background = shap.sample(feature_df, background_size)
+                self.shap_explainer = shap.KernelExplainer(
+                    self.isolation_forest_model.decision_function,
+                    background
+                )
+
+        # Calculate SHAP values
+        shap_values = self.shap_explainer.shap_values(feature_df)
+
+        # Handle different SHAP value formats
+        if isinstance(shap_values, list):
+            shap_values = shap_values[0]
+        if len(shap_values.shape) > 1:
+            shap_values = shap_values[0]
+
+        # Get feature importance ranking
+        feature_importance = []
+        for i, feature_name in enumerate(telemetry_features):
+            shap_val = shap_values[i]
+            feature_val = feature_df[feature_name].iloc[0]
+
+            # Determine direction (high/low/normal)
+            if abs(shap_val) < 0.01:
+                direction = 'normal'
+            elif shap_val > 0:
+                direction = 'high'
+            else:
+                direction = 'low'
+
+            feature_importance.append({
+                'feature': feature_name,
+                'contribution': abs(shap_val),
+                'shap_value': float(shap_val),
+                'feature_value': float(feature_val),
+                'direction': direction
+            })
+
+        # Sort by contribution (absolute SHAP value)
+        feature_importance.sort(key=lambda x: x['contribution'], reverse=True)
+
+        # Normalize contributions to percentages
+        total_contribution = sum(f['contribution'] for f in feature_importance)
+        if total_contribution > 0:
+            for f in feature_importance:
+                f['contribution'] = (f['contribution'] / total_contribution)
+
+        # Generate human-readable explanation
+        top_3 = feature_importance[:3]
+        explanation_parts = []
+
+        for f in top_3:
+            feature_clean = f['feature'].replace('_', ' ').title()
+            contrib_pct = f['contribution'] * 100
+
+            if f['direction'] == 'normal':
+                continue
+            elif f['direction'] == 'high':
+                explanation_parts.append(
+                    f"{feature_clean} {contrib_pct:.0f}% too high"
+                )
+            else:
+                explanation_parts.append(
+                    f"{feature_clean} {contrib_pct:.0f}% too low"
+                )
+
+        explanation = ", ".join(explanation_parts) if explanation_parts else "Anomalous pattern detected"
+
+        # Calculate confidence from anomaly score
+        anomaly_score = anomaly_data.get('anomaly_score', -1)
+        # Convert anomaly score to confidence (lower score = higher confidence)
+        # Typical scores range from -0.5 to 0.5
+        confidence = max(0.0, min(1.0, 1.0 - (anomaly_score + 0.5)))
+
+        return {
+            'top_features': feature_importance,
+            'explanation': explanation,
+            'shap_values': shap_values,
+            'confidence': float(confidence)
+        }
+
+    def get_anomaly_explanations(
+        self,
+        anomalies_df: pd.DataFrame,
+        telemetry_data: Optional[pd.DataFrame] = None
+    ) -> pd.DataFrame:
+        """
+        Generate SHAP-based explanations for all detected anomalies.
+
+        Args:
+            anomalies_df: DataFrame with anomaly flags (from detect_pattern_anomalies)
+            telemetry_data: Optional full telemetry data. If None, uses anomalies_df.
+
+        Returns:
+            DataFrame with original anomaly data plus explanation columns:
+            - explanation: Human-readable explanation
+            - top_feature_1, top_feature_2, top_feature_3: Top contributing features
+            - contribution_1, contribution_2, contribution_3: Contribution percentages
+            - confidence: Explanation confidence score
+
+        Example:
+            >>> detector = AnomalyDetector()
+            >>> result_df = detector.detect_pattern_anomalies(telemetry_df)
+            >>> anomalies = result_df[result_df['is_anomaly'] == -1]
+            >>> explained = detector.get_anomaly_explanations(anomalies)
+            >>> print(explained[['LAP_NUMBER', 'explanation', 'confidence']])
+        """
+        if not SHAP_AVAILABLE:
+            import warnings
+            warnings.warn(
+                "SHAP is not installed. Returning original dataframe without explanations. "
+                "Install with: pip install shap"
+            )
+            return anomalies_df.copy()
+
+        if self.isolation_forest_model is None:
+            import warnings
+            warnings.warn(
+                "No trained model found. Run detect_pattern_anomalies() first. "
+                "Returning original dataframe without explanations."
+            )
+            return anomalies_df.copy()
+
+        # Use telemetry_data if provided, otherwise use anomalies_df
+        data_to_use = telemetry_data if telemetry_data is not None else anomalies_df
+
+        # Create result dataframe
+        result_df = anomalies_df.copy()
+
+        # Initialize explanation columns
+        result_df['explanation'] = ''
+        result_df['top_feature_1'] = ''
+        result_df['top_feature_2'] = ''
+        result_df['top_feature_3'] = ''
+        result_df['contribution_1'] = 0.0
+        result_df['contribution_2'] = 0.0
+        result_df['contribution_3'] = 0.0
+        result_df['confidence'] = 0.0
+
+        # Generate explanations for each anomaly
+        for idx in result_df.index:
+            try:
+                anomaly_row = data_to_use.loc[idx]
+                explanation = self.explain_anomaly(anomaly_row)
+
+                result_df.at[idx, 'explanation'] = explanation['explanation']
+                result_df.at[idx, 'confidence'] = explanation['confidence']
+
+                # Add top 3 features
+                top_features = explanation['top_features'][:3]
+                for i, feature_info in enumerate(top_features, 1):
+                    result_df.at[idx, f'top_feature_{i}'] = feature_info['feature']
+                    result_df.at[idx, f'contribution_{i}'] = feature_info['contribution']
+
+            except Exception as e:
+                import warnings
+                warnings.warn(f"Failed to explain anomaly at index {idx}: {e}")
+                result_df.at[idx, 'explanation'] = 'Explanation unavailable'
+                result_df.at[idx, 'confidence'] = 0.0
+
+        return result_df

@@ -359,6 +359,74 @@ class DataLoader:
         except (ValueError, AttributeError):
             return None
 
+    def load_weather_data(
+        self, file_path: Optional[Union[str, Path]] = None
+    ) -> Optional[pd.DataFrame]:
+        """
+        Load weather data for the track/race.
+
+        Expected columns:
+        - TIME_UTC_SECONDS (timestamp in Unix format)
+        - TIME_UTC_STR (human-readable timestamp)
+        - AIR_TEMP (Temperature in Celsius)
+        - HUMIDITY (Humidity %)
+        - WIND_SPEED (Wind speed in km/h)
+        - RAIN (Precipitation indicator)
+        - TRACK_TEMP (Track temperature in Celsius, if available)
+
+        Args:
+            file_path: Path to the weather CSV file. If None, searches in base_path.
+
+        Returns:
+            DataFrame with weather conditions, or None if no data available.
+        """
+        try:
+            if file_path is None:
+                pattern = str(self.base_path / FILE_PATTERNS["weather"])
+                files = glob.glob(pattern)
+                if not files:
+                    logger.info(f"No weather files found matching pattern: {pattern}")
+                    return None
+                file_path = files[0]
+                logger.info(f"Auto-detected weather file: {file_path}")
+
+            # Load the CSV (semicolon separated)
+            df = pd.read_csv(file_path, sep=";")
+            logger.info(f"Loaded weather data: {len(df)} rows, {len(df.columns)} columns")
+
+            # Parse timestamps
+            if "TIME_UTC_SECONDS" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["TIME_UTC_SECONDS"], unit="s", errors="coerce")
+            elif "TIME_UTC_STR" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["TIME_UTC_STR"], errors="coerce")
+
+            # Convert numeric columns
+            numeric_cols = ["AIR_TEMP", "TRACK_TEMP", "HUMIDITY", "PRESSURE",
+                           "WIND_SPEED", "WIND_DIRECTION", "RAIN"]
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            # Handle missing track temperature (use air temp as proxy if needed)
+            if "TRACK_TEMP" in df.columns and df["TRACK_TEMP"].isna().all():
+                logger.info("Track temperature not available, estimating from air temp")
+                if "AIR_TEMP" in df.columns:
+                    # Track temp is typically 5-15°C higher than air temp in sunlight
+                    df["TRACK_TEMP_ESTIMATED"] = df["AIR_TEMP"] + 10.0
+
+            # Sort by timestamp
+            if "timestamp" in df.columns:
+                df = df.sort_values("timestamp").reset_index(drop=True)
+
+            return df
+
+        except FileNotFoundError as e:
+            logger.info(f"Weather data file not found: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Error loading weather data: {e}")
+            return None
+
     def load_all_sample_data(self) -> Dict[str, pd.DataFrame]:
         """
         Load all available sample data files.
@@ -398,6 +466,11 @@ class DataLoader:
             data["race_results"] = self.load_race_results()
         except Exception as e:
             logger.warning(f"Could not load race results data: {e}")
+
+        try:
+            data["weather"] = self.load_weather_data()
+        except Exception as e:
+            logger.warning(f"Could not load weather data: {e}")
 
         logger.info(f"Loaded {len(data)} data files successfully")
         return data

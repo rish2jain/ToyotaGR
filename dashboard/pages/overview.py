@@ -58,6 +58,153 @@ def show_race_overview(data, track, race_num):
 
             st.markdown("---")
 
+            # Weather Widget
+            if 'weather' in data and data['weather'] is not None and not data['weather'].empty:
+                st.header("Weather Conditions")
+                weather_df = data['weather']
+
+                # Get average or latest conditions
+                latest_weather = weather_df.iloc[-1] if len(weather_df) > 0 else None
+
+                if latest_weather is not None:
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    # Temperature with color coding
+                    with col1:
+                        air_temp = latest_weather.get('AIR_TEMP', None)
+                        if pd.notna(air_temp):
+                            # Color coding: Green (18-28°C), Yellow (28-32°C), Red (>32°C or <18°C)
+                            if 18 <= air_temp <= 28:
+                                temp_color = "🟢"
+                                temp_status = "Ideal"
+                            elif 28 < air_temp <= 32:
+                                temp_color = "🟡"
+                                temp_status = "Warm"
+                            elif air_temp > 32:
+                                temp_color = "🔴"
+                                temp_status = "Hot"
+                            else:
+                                temp_color = "🟡"
+                                temp_status = "Cool"
+
+                            st.metric(
+                                f"{temp_color} Air Temp",
+                                f"{air_temp:.1f}°C",
+                                delta=temp_status
+                            )
+                        else:
+                            st.metric("Air Temp", "N/A")
+
+                    # Track Temperature
+                    with col2:
+                        track_temp = latest_weather.get('TRACK_TEMP', 0)
+                        if pd.isna(track_temp) or track_temp == 0:
+                            track_temp = latest_weather.get('TRACK_TEMP_ESTIMATED', air_temp + 10 if pd.notna(air_temp) else None)
+
+                        if pd.notna(track_temp):
+                            # Color coding: Green (25-40°C), Yellow (40-45°C), Red (>45°C or <25°C)
+                            if 25 <= track_temp <= 40:
+                                track_color = "🟢"
+                                track_status = "Ideal"
+                            elif 40 < track_temp <= 45:
+                                track_color = "🟡"
+                                track_status = "Warm"
+                            elif track_temp > 45:
+                                track_color = "🔴"
+                                track_status = "Hot"
+                            else:
+                                track_color = "🟡"
+                                track_status = "Cool"
+
+                            st.metric(
+                                f"{track_color} Track Temp",
+                                f"{track_temp:.1f}°C",
+                                delta=track_status
+                            )
+                        else:
+                            st.metric("Track Temp", "N/A")
+
+                    # Humidity
+                    with col3:
+                        humidity = latest_weather.get('HUMIDITY', None)
+                        if pd.notna(humidity):
+                            # Color coding: Green (<60%), Yellow (60-75%), Red (>75%)
+                            if humidity < 60:
+                                humidity_color = "🟢"
+                                humidity_status = "Low"
+                            elif humidity <= 75:
+                                humidity_color = "🟡"
+                                humidity_status = "Moderate"
+                            else:
+                                humidity_color = "🔴"
+                                humidity_status = "High"
+
+                            st.metric(
+                                f"{humidity_color} Humidity",
+                                f"{humidity:.0f}%",
+                                delta=humidity_status
+                            )
+                        else:
+                            st.metric("Humidity", "N/A")
+
+                    # Wind Speed
+                    with col4:
+                        wind_speed = latest_weather.get('WIND_SPEED', None)
+                        if pd.notna(wind_speed):
+                            # Color coding: Green (<15 km/h), Yellow (15-25 km/h), Red (>25 km/h)
+                            if wind_speed < 15:
+                                wind_color = "🟢"
+                                wind_status = "Light"
+                            elif wind_speed <= 25:
+                                wind_color = "🟡"
+                                wind_status = "Moderate"
+                            else:
+                                wind_color = "🔴"
+                                wind_status = "Strong"
+
+                            st.metric(
+                                f"{wind_color} Wind Speed",
+                                f"{wind_speed:.1f} km/h",
+                                delta=wind_status
+                            )
+                        else:
+                            st.metric("Wind Speed", "N/A")
+
+                    # Weather Impact Analysis
+                    try:
+                        # Import weather adjuster
+                        import sys
+                        from pathlib import Path
+                        project_root = Path(__file__).parent.parent.parent
+                        sys.path.insert(0, str(project_root))
+
+                        from src.integration.weather_adjuster import WeatherAdjuster
+
+                        adjuster = WeatherAdjuster()
+                        conditions = adjuster.get_current_conditions(weather_df)
+
+                        if conditions:
+                            # Calculate impact
+                            base_deg = 0.05  # 0.05 seconds/lap baseline
+                            adjusted_deg, deg_explanation = adjuster.adjust_tire_degradation(base_deg, conditions)
+                            deg_change = ((adjusted_deg / base_deg) - 1) * 100
+
+                            # Display impact
+                            st.info(
+                                f"**Weather Impact:** Track temp {conditions.track_temp:.0f}°C → "
+                                f"Tire degradation {deg_change:+.0f}% ({deg_explanation})"
+                            )
+
+                            # Add precipitation warning if relevant
+                            if conditions.precipitation > 0:
+                                st.warning("⚠ **WET CONDITIONS DETECTED** - Expect slower lap times and reduced grip")
+
+                    except Exception as e:
+                        # Silently fail if weather adjuster not available
+                        pass
+
+                st.markdown("---")
+
             # Leaderboard Section
             st.header("Final Standings")
 

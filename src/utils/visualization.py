@@ -11,7 +11,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+
 from .constants import VIZ_CONFIG
+from .track_layouts import get_track_layout
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -463,3 +471,400 @@ def save_figure(fig: plt.Figure, filepath: str, dpi: int = 300):
     """
     fig.savefig(filepath, dpi=dpi, bbox_inches="tight")
     logger.info(f"Figure saved to {filepath}")
+
+
+# ============================================================================
+# Track Map Visualizations with Performance Overlay
+# ============================================================================
+
+
+def _map_performance_to_colors(section_gaps: pd.Series, colorscale: str = 'RdYlGn_r') -> List[str]:
+    """
+    Map performance gaps to colors
+
+    Args:
+        section_gaps: Series with gap values per section
+        colorscale: Plotly colorscale name
+
+    Returns:
+        List of color strings
+    """
+    if len(section_gaps) == 0:
+        return []
+
+    # Normalize gaps to 0-1 range
+    min_gap = section_gaps.min()
+    max_gap = section_gaps.max()
+
+    if max_gap == min_gap:
+        # All gaps are the same
+        normalized = [0.5] * len(section_gaps)
+    else:
+        normalized = (section_gaps - min_gap) / (max_gap - min_gap)
+
+    # Map to colors (using simple RGB interpolation)
+    colors = []
+    for val in normalized:
+        # Red (slow) to Yellow to Green (fast)
+        # Reverse because smaller gap is better
+        val = 1 - val
+
+        if val < 0.5:
+            # Red to Yellow
+            r = 255
+            g = int(255 * (val * 2))
+            b = 0
+        else:
+            # Yellow to Green
+            r = int(255 * (1 - (val - 0.5) * 2))
+            g = 255
+            b = 0
+
+        colors.append(f'rgb({r},{g},{b})')
+
+    return colors
+
+
+def _get_performance_rating(gap: float, optimal: float = 0.0) -> str:
+    """
+    Get performance rating based on gap to optimal
+
+    Args:
+        gap: Gap to optimal in seconds
+        optimal: Optimal time (default 0 for relative gaps)
+
+    Returns:
+        Performance rating string
+    """
+    if gap < 0.05:
+        return "Excellent"
+    elif gap < 0.15:
+        return "Good"
+    elif gap < 0.30:
+        return "Average"
+    else:
+        return "Needs Improvement"
+
+
+def create_track_map_with_performance(
+    section_data: pd.DataFrame,
+    track_name: str = 'barber',
+    section_col: str = 'Section',
+    time_col: str = 'Time',
+    gap_col: str = 'GapToOptimal',
+    driver_label: str = None
+) -> 'go.Figure':
+    """
+    Create interactive track map with color-coded performance overlay
+
+    Args:
+        section_data: DataFrame with section performance data
+        track_name: Track name ('barber', 'cota', 'sonoma', etc.)
+        section_col: Column name for section identifier
+        time_col: Column name for section time
+        gap_col: Column name for gap to optimal
+        driver_label: Optional driver label for title
+
+    Returns:
+        plotly.graph_objects.Figure with interactive track map
+    """
+    if not PLOTLY_AVAILABLE:
+        logger.error("Plotly is required for track map visualization")
+        return None
+
+    # Load track coordinates
+    track_layout = get_track_layout(track_name)
+    track_sections = track_layout['sections']
+    track_info = track_layout['track_info']
+
+    # Calculate performance gaps per section
+    if gap_col in section_data.columns:
+        section_gaps = section_data.groupby(section_col)[gap_col].mean()
+    elif time_col in section_data.columns:
+        # Calculate gaps from times
+        section_times = section_data.groupby(section_col)[time_col].mean()
+        optimal_times = section_data.groupby(section_col)[time_col].min()
+        section_gaps = section_times - optimal_times
+    else:
+        logger.error(f"Neither {gap_col} nor {time_col} found in data")
+        return None
+
+    # Map data sections to track sections
+    data_sections = sorted(section_data[section_col].unique())
+    num_track_sections = len(track_sections)
+
+    # Create color mapping
+    colors = _map_performance_to_colors(section_gaps)
+
+    # Create figure
+    fig = go.Figure()
+
+    # Add track sections with performance coloring
+    for i, section in enumerate(track_sections):
+        # Map data section to track section
+        data_idx = int((i / num_track_sections) * len(data_sections)) if len(data_sections) > 0 else 0
+        data_section = data_sections[data_idx] if data_idx < len(data_sections) else data_sections[-1]
+
+        # Get gap for this section
+        gap = section_gaps.get(data_section, 0.0)
+        color = colors[data_idx] if data_idx < len(colors) else 'rgb(128,128,128)'
+
+        # Create hover text
+        hover_text = (
+            f"<b>{section['name']}</b><br>"
+            f"Type: {section['type'].title()}<br>"
+            f"Gap: {gap:.3f}s<br>"
+            f"Performance: {_get_performance_rating(gap)}<br>"
+            f"{section['description']}"
+        )
+
+        # Add trace for this section
+        fig.add_trace(go.Scatter(
+            x=section['x'],
+            y=section['y'],
+            mode='lines',
+            line=dict(
+                color=color,
+                width=12
+            ),
+            name=section['name'],
+            showlegend=False,
+            hovertemplate=hover_text + "<extra></extra>",
+            hoverlabel=dict(
+                bgcolor=color,
+                font_size=12,
+                font_color='white'
+            )
+        ))
+
+    # Add start/finish line marker
+    if len(track_sections) > 0:
+        first_section = track_sections[0]
+        fig.add_trace(go.Scatter(
+            x=[first_section['x'][0]],
+            y=[first_section['y'][0]],
+            mode='markers+text',
+            marker=dict(
+                size=15,
+                color='white',
+                symbol='square',
+                line=dict(color='black', width=2)
+            ),
+            text=['S/F'],
+            textposition='top center',
+            textfont=dict(size=14, color='black', family='Arial Black'),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+
+    # Update layout
+    title_text = f"Track Map: Performance by Section"
+    if driver_label:
+        title_text += f" - {driver_label}"
+
+    fig.update_layout(
+        title={
+            'text': f"{title_text}<br><sub>{track_info['name']} ({track_info['length']}, {track_info['turns']} turns)</sub>",
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 20}
+        },
+        showlegend=False,
+        xaxis=dict(
+            visible=False,
+            scaleanchor="y",
+            scaleratio=1
+        ),
+        yaxis=dict(
+            visible=False
+        ),
+        hovermode='closest',
+        plot_bgcolor='#1a1a1a',
+        paper_bgcolor='#2b2b2b',
+        width=900,
+        height=700,
+        margin=dict(l=20, r=20, t=80, b=20)
+    )
+
+    # Add color legend annotation
+    legend_text = (
+        "<b>Performance Guide:</b><br>"
+        "🟢 Green: Fast (< 0.05s gap)<br>"
+        "🟡 Yellow: Good (0.05-0.15s gap)<br>"
+        "🟠 Orange: Average (0.15-0.30s gap)<br>"
+        "🔴 Red: Slow (> 0.30s gap)"
+    )
+
+    fig.add_annotation(
+        x=0.02,
+        y=0.98,
+        xref='paper',
+        yref='paper',
+        text=legend_text,
+        showarrow=False,
+        align='left',
+        bgcolor='rgba(255,255,255,0.8)',
+        bordercolor='black',
+        borderwidth=1,
+        font=dict(size=11, color='black')
+    )
+
+    return fig
+
+
+def create_driver_comparison_map(
+    driver1_data: pd.DataFrame,
+    driver2_data: pd.DataFrame,
+    track_name: str = 'barber',
+    driver1_label: str = "Driver 1",
+    driver2_label: str = "Driver 2",
+    section_col: str = 'Section',
+    time_col: str = 'Time'
+) -> 'go.Figure':
+    """
+    Create track map comparing two drivers' performance
+
+    Args:
+        driver1_data: DataFrame with first driver's section data
+        driver2_data: DataFrame with second driver's section data
+        track_name: Track name
+        driver1_label: Label for first driver
+        driver2_label: Label for second driver
+        section_col: Column name for section identifier
+        time_col: Column name for section time
+
+    Returns:
+        plotly.graph_objects.Figure with comparison
+    """
+    if not PLOTLY_AVAILABLE:
+        logger.error("Plotly is required for track map visualization")
+        return None
+
+    # Load track layout
+    track_layout = get_track_layout(track_name)
+    track_sections = track_layout['sections']
+    track_info = track_layout['track_info']
+
+    # Calculate section times for both drivers
+    d1_times = driver1_data.groupby(section_col)[time_col].mean()
+    d2_times = driver2_data.groupby(section_col)[time_col].mean()
+
+    # Calculate who's faster in each section
+    time_diffs = d1_times - d2_times  # Positive = driver 2 faster
+
+    # Map data sections to track sections
+    data_sections = sorted(set(driver1_data[section_col].unique()) | set(driver2_data[section_col].unique()))
+    num_track_sections = len(track_sections)
+
+    # Create figure
+    fig = go.Figure()
+
+    # Add track sections with comparison coloring
+    for i, section in enumerate(track_sections):
+        # Map to data section
+        data_idx = int((i / num_track_sections) * len(data_sections)) if len(data_sections) > 0 else 0
+        data_section = data_sections[data_idx] if data_idx < len(data_sections) else data_sections[-1]
+
+        # Get time difference
+        diff = time_diffs.get(data_section, 0.0)
+
+        # Color based on who's faster
+        if abs(diff) < 0.05:
+            color = 'rgb(200,200,200)'  # Gray for equal
+            faster = "Equal"
+        elif diff < 0:
+            # Driver 1 faster
+            intensity = min(abs(diff) * 255 / 0.5, 255)
+            color = f'rgb({int(intensity)},100,100)'
+            faster = driver1_label
+        else:
+            # Driver 2 faster
+            intensity = min(abs(diff) * 255 / 0.5, 255)
+            color = f'rgb(100,100,{int(intensity)})'
+            faster = driver2_label
+
+        # Hover text
+        d1_time = d1_times.get(data_section, 0.0)
+        d2_time = d2_times.get(data_section, 0.0)
+
+        hover_text = (
+            f"<b>{section['name']}</b><br>"
+            f"{driver1_label}: {d1_time:.3f}s<br>"
+            f"{driver2_label}: {d2_time:.3f}s<br>"
+            f"Difference: {abs(diff):.3f}s<br>"
+            f"Faster: {faster}"
+        )
+
+        # Add trace
+        fig.add_trace(go.Scatter(
+            x=section['x'],
+            y=section['y'],
+            mode='lines',
+            line=dict(color=color, width=12),
+            name=section['name'],
+            showlegend=False,
+            hovertemplate=hover_text + "<extra></extra>"
+        ))
+
+    # Add start/finish marker
+    if len(track_sections) > 0:
+        first_section = track_sections[0]
+        fig.add_trace(go.Scatter(
+            x=[first_section['x'][0]],
+            y=[first_section['y'][0]],
+            mode='markers+text',
+            marker=dict(
+                size=15,
+                color='white',
+                symbol='square',
+                line=dict(color='black', width=2)
+            ),
+            text=['S/F'],
+            textposition='top center',
+            textfont=dict(size=14, color='black', family='Arial Black'),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+
+    # Update layout
+    fig.update_layout(
+        title={
+            'text': f"Driver Comparison: {driver1_label} vs {driver2_label}<br><sub>{track_info['name']}</sub>",
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 20}
+        },
+        showlegend=False,
+        xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
+        yaxis=dict(visible=False),
+        hovermode='closest',
+        plot_bgcolor='#1a1a1a',
+        paper_bgcolor='#2b2b2b',
+        width=900,
+        height=700,
+        margin=dict(l=20, r=20, t=80, b=20)
+    )
+
+    # Add legend
+    legend_text = (
+        f"<b>Color Guide:</b><br>"
+        f"🔴 Red: {driver1_label} faster<br>"
+        f"🔵 Blue: {driver2_label} faster<br>"
+        f"⚪ Gray: Equal performance"
+    )
+
+    fig.add_annotation(
+        x=0.02,
+        y=0.98,
+        xref='paper',
+        yref='paper',
+        text=legend_text,
+        showarrow=False,
+        align='left',
+        bgcolor='rgba(255,255,255,0.8)',
+        bordercolor='black',
+        borderwidth=1,
+        font=dict(size=11, color='black')
+    )
+
+    return fig

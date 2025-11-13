@@ -271,31 +271,470 @@ def show_strategic_analysis(data, track, race_num):
                         degradation = last_5_avg - first_5_avg
                         st.metric("Overall Degradation", f"{degradation:.3f}s", delta=f"{degradation:.3f}s", delta_color="inverse")
 
+                    # Weather-Adjusted Tire Degradation
+                    if 'weather' in data and data['weather'] is not None and not data['weather'].empty:
+                        st.subheader("Weather-Adjusted Tire Degradation")
+
+                        try:
+                            # Import weather adjuster
+                            import sys
+                            from pathlib import Path
+                            project_root = Path(__file__).parent.parent.parent
+                            sys.path.insert(0, str(project_root))
+
+                            from src.integration.weather_adjuster import WeatherAdjuster
+
+                            weather_df = data['weather']
+                            adjuster = WeatherAdjuster()
+                            conditions = adjuster.get_current_conditions(weather_df)
+
+                            if conditions:
+                                # Calculate degradation rate from actual data
+                                if len(racing_laps) > 2:
+                                    slope, intercept, r_value, p_value, std_err = stats.linregress(
+                                        racing_laps['LAP_NUMBER'],
+                                        racing_laps['lap_seconds']
+                                    )
+                                    base_deg_rate = max(slope, 0.01)  # Ensure positive
+
+                                    # Get weather-adjusted degradation
+                                    adjusted_deg_rate, deg_explanation = adjuster.adjust_tire_degradation(
+                                        base_deg_rate, conditions
+                                    )
+
+                                    # Create comparison chart
+                                    fig = go.Figure()
+
+                                    # Original degradation trend
+                                    original_trend = intercept + slope * racing_laps['LAP_NUMBER']
+
+                                    fig.add_trace(go.Scatter(
+                                        x=racing_laps['LAP_NUMBER'],
+                                        y=original_trend,
+                                        mode='lines',
+                                        name='Baseline Degradation',
+                                        line=dict(color='blue', width=3, dash='dash')
+                                    ))
+
+                                    # Weather-adjusted degradation trend
+                                    adjusted_trend = intercept + adjusted_deg_rate * (racing_laps['LAP_NUMBER'] - racing_laps['LAP_NUMBER'].min())
+
+                                    fig.add_trace(go.Scatter(
+                                        x=racing_laps['LAP_NUMBER'],
+                                        y=adjusted_trend,
+                                        mode='lines',
+                                        name='Weather-Adjusted Degradation',
+                                        line=dict(color='red', width=3)
+                                    ))
+
+                                    # Actual lap times
+                                    fig.add_trace(go.Scatter(
+                                        x=racing_laps['LAP_NUMBER'],
+                                        y=racing_laps['lap_seconds'],
+                                        mode='markers',
+                                        name='Actual Lap Times',
+                                        marker=dict(size=6, color='lightblue')
+                                    ))
+
+                                    fig.update_layout(
+                                        xaxis_title="Lap Number",
+                                        yaxis_title="Lap Time (seconds)",
+                                        height=400,
+                                        hovermode='x unified',
+                                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                                    )
+
+                                    st.plotly_chart(fig, use_container_width=True)
+
+                                    # Display comparison metrics
+                                    col1, col2, col3 = st.columns(3)
+
+                                    with col1:
+                                        st.metric(
+                                            "Baseline Deg Rate",
+                                            f"{base_deg_rate:.4f}s/lap"
+                                        )
+
+                                    with col2:
+                                        deg_change = ((adjusted_deg_rate / base_deg_rate) - 1) * 100
+                                        st.metric(
+                                            "Weather-Adjusted Rate",
+                                            f"{adjusted_deg_rate:.4f}s/lap",
+                                            delta=f"{deg_change:+.1f}%",
+                                            delta_color="inverse"
+                                        )
+
+                                    with col3:
+                                        # Calculate impact on pit window
+                                        total_laps = driver_data['LAP_NUMBER'].max()
+                                        laps_remaining = total_laps * 0.5  # Assume mid-race
+
+                                        time_diff = (adjusted_deg_rate - base_deg_rate) * laps_remaining
+                                        st.metric(
+                                            "Impact on Remaining Stint",
+                                            f"{time_diff:+.2f}s"
+                                        )
+
+                                    # Display weather impact explanation
+                                    st.info(f"**Weather Impact:** {deg_explanation}")
+
+                                    # Strategic recommendation based on weather
+                                    if adjusted_deg_rate > base_deg_rate * 1.1:
+                                        st.warning(
+                                            "⚠ **Recommendation:** Weather conditions increase tire degradation. "
+                                            "Consider earlier pit stop or more conservative pace to manage tire life."
+                                        )
+                                    elif adjusted_deg_rate < base_deg_rate * 0.95:
+                                        st.success(
+                                            "✓ **Recommendation:** Weather conditions reduce tire degradation. "
+                                            "Can extend stint or push harder with reduced tire wear."
+                                        )
+
+                        except Exception as e:
+                            # Silently fail if weather adjustment not available
+                            pass
+
             st.markdown("---")
 
-            # Optimal Pit Window
-            st.header("Optimal Pit Window Analysis")
+            # Optimal Pit Window with Bayesian Uncertainty
+            st.header("Optimal Pit Window Analysis with Bayesian Uncertainty")
 
             if 'lap_seconds' in driver_data.columns and len(driver_data) > 10:
                 st.subheader("Pit Window Recommendation")
 
                 total_laps = driver_data['LAP_NUMBER'].max()
 
-                # Calculate optimal pit window (simplified model)
-                # Typically 1/3 to 2/3 through the race
-                optimal_start = int(total_laps * 0.33)
-                optimal_end = int(total_laps * 0.67)
+                # Import strategy optimizer
+                try:
+                    import sys
+                    sys.path.append('/home/user/ToyotaGR')
+                    from src.strategic.strategy_optimizer import PitStrategyOptimizer
 
-                col1, col2, col3 = st.columns(3)
+                    # Initialize optimizer
+                    optimizer = PitStrategyOptimizer(
+                        pit_loss_seconds=25.0,
+                        simulation_iterations=100,
+                        uncertainty_model='bayesian'
+                    )
 
-                with col1:
-                    st.metric("Total Race Laps", int(total_laps))
+                    # Build simple tire model from data
+                    racing_laps = driver_data[~driver_data['is_pit_lap']] if 'is_pit_lap' in driver_data.columns else driver_data
 
-                with col2:
-                    st.metric("Optimal Window Start", f"Lap {optimal_start}")
+                    if len(racing_laps) > 5:
+                        slope, intercept, _, _, _ = stats.linregress(
+                            racing_laps['LAP_NUMBER'],
+                            racing_laps['lap_seconds']
+                        )
 
-                with col3:
-                    st.metric("Optimal Window End", f"Lap {optimal_end}")
+                        tire_model = {
+                            'baseline_lap_time': float(intercept),
+                            'degradation_rate': float(slope),
+                            'model_type': 'linear'
+                        }
+                    else:
+                        # Fallback model
+                        tire_model = {
+                            'baseline_lap_time': racing_laps['lap_seconds'].mean(),
+                            'degradation_rate': 0.05,
+                            'model_type': 'linear'
+                        }
+
+                    # Calculate Bayesian optimal pit window
+                    with st.spinner("Calculating optimal pit window with uncertainty quantification..."):
+                        bayesian_results = optimizer.calculate_optimal_pit_window_with_uncertainty(
+                            driver_data,
+                            tire_model,
+                            race_length=int(total_laps)
+                        )
+
+                    # Display results with confidence intervals
+                    st.subheader("Bayesian Pit Strategy Recommendation")
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric("Total Race Laps", int(total_laps))
+
+                    with col2:
+                        st.metric(
+                            "Optimal Pit Lap",
+                            f"Lap {bayesian_results['optimal_lap']}",
+                            help=f"Posterior mean: {bayesian_results['posterior_mean']:.1f}"
+                        )
+
+                    with col3:
+                        uncertainty_pct = bayesian_results['uncertainty'] * 100
+                        st.metric(
+                            "Uncertainty",
+                            f"{uncertainty_pct:.1f}%",
+                            help=f"Relative uncertainty (std/mean)"
+                        )
+
+                    with col4:
+                        risk_level = bayesian_results['risk_assessment']['risk_level']
+                        risk_color = {
+                            'LOW': '🟢',
+                            'MODERATE': '🟡',
+                            'ELEVATED': '🟠',
+                            'HIGH': '🔴'
+                        }.get(risk_level, '⚪')
+                        st.metric(
+                            "Risk Level",
+                            f"{risk_color} {risk_level}"
+                        )
+
+                    # Confidence interval display
+                    st.subheader("Confidence Intervals")
+
+                    # Confidence level slider
+                    confidence_level = st.select_slider(
+                        "Select Confidence Level",
+                        options=[80, 90, 95],
+                        value=90,
+                        help="Adjust the confidence level for the credible interval"
+                    )
+
+                    # Get appropriate interval
+                    if confidence_level == 95:
+                        interval = bayesian_results['confidence_95']
+                        interval_name = "95%"
+                    elif confidence_level == 90:
+                        interval = bayesian_results['confidence_90']
+                        interval_name = "90%"
+                    else:
+                        interval = bayesian_results['confidence_80']
+                        interval_name = "80%"
+
+                    st.info(
+                        f"**{interval_name} Confidence:** Pit between laps **{interval[0]}** and **{interval[1]}**\n\n"
+                        f"This means we are {interval_name} confident the optimal pit lap falls within this range."
+                    )
+
+                    # All confidence intervals display
+                    intervals_df = pd.DataFrame({
+                        'Confidence Level': ['80%', '90%', '95%'],
+                        'Lower Bound': [
+                            bayesian_results['confidence_80'][0],
+                            bayesian_results['confidence_90'][0],
+                            bayesian_results['confidence_95'][0]
+                        ],
+                        'Upper Bound': [
+                            bayesian_results['confidence_80'][1],
+                            bayesian_results['confidence_90'][1],
+                            bayesian_results['confidence_95'][1]
+                        ],
+                        'Window Size': [
+                            bayesian_results['confidence_80'][1] - bayesian_results['confidence_80'][0],
+                            bayesian_results['confidence_90'][1] - bayesian_results['confidence_90'][0],
+                            bayesian_results['confidence_95'][1] - bayesian_results['confidence_95'][0]
+                        ]
+                    })
+                    st.dataframe(intervals_df, hide_index=True, use_container_width=True)
+
+                    # Posterior distribution visualization
+                    st.subheader("Posterior Distribution (Pit Lap Probability)")
+
+                    # Get visualization data
+                    viz_data = optimizer.visualize_posterior_distribution(bayesian_results)
+
+                    # Create violin plot
+                    fig_violin = go.Figure()
+
+                    # Add violin plot
+                    fig_violin.add_trace(go.Violin(
+                        y=bayesian_results['posterior_samples'],
+                        name='Posterior Distribution',
+                        box_visible=True,
+                        meanline_visible=True,
+                        fillcolor='lightblue',
+                        opacity=0.6,
+                        x0='Optimal Pit Lap'
+                    ))
+
+                    # Add confidence interval markers
+                    for conf_level, interval_data in [
+                        ('95%', bayesian_results['confidence_95']),
+                        ('90%', bayesian_results['confidence_90']),
+                        ('80%', bayesian_results['confidence_80'])
+                    ]:
+                        fig_violin.add_hline(
+                            y=interval_data[0],
+                            line_dash="dash",
+                            line_color="red",
+                            opacity=0.5,
+                            annotation_text=f"{conf_level} Lower"
+                        )
+                        fig_violin.add_hline(
+                            y=interval_data[1],
+                            line_dash="dash",
+                            line_color="red",
+                            opacity=0.5,
+                            annotation_text=f"{conf_level} Upper"
+                        )
+
+                    fig_violin.update_layout(
+                        yaxis_title="Pit Lap Number",
+                        height=500,
+                        showlegend=True
+                    )
+
+                    st.plotly_chart(fig_violin, use_container_width=True)
+
+                    # PDF curve visualization
+                    fig_pdf = go.Figure()
+
+                    # Add PDF curve
+                    fig_pdf.add_trace(go.Scatter(
+                        x=viz_data['pdf']['x'],
+                        y=viz_data['pdf']['y'],
+                        mode='lines',
+                        name='Probability Density',
+                        fill='tozeroy',
+                        line=dict(color='blue', width=3)
+                    ))
+
+                    # Add optimal lap marker
+                    optimal_y = stats.norm.pdf(
+                        bayesian_results['optimal_lap'],
+                        bayesian_results['posterior_mean'],
+                        bayesian_results['posterior_std']
+                    )
+                    fig_pdf.add_trace(go.Scatter(
+                        x=[bayesian_results['optimal_lap']],
+                        y=[optimal_y],
+                        mode='markers',
+                        name='Optimal Lap',
+                        marker=dict(size=15, color='red', symbol='star')
+                    ))
+
+                    # Shade confidence intervals
+                    conf_x = np.array(viz_data['pdf']['x'])
+                    conf_y = np.array(viz_data['pdf']['y'])
+
+                    # Shade selected confidence interval
+                    mask = (conf_x >= interval[0]) & (conf_x <= interval[1])
+                    fig_pdf.add_trace(go.Scatter(
+                        x=conf_x[mask],
+                        y=conf_y[mask],
+                        fill='tozeroy',
+                        mode='none',
+                        name=f'{interval_name} Interval',
+                        fillcolor='rgba(255, 0, 0, 0.2)'
+                    ))
+
+                    fig_pdf.update_layout(
+                        xaxis_title="Pit Lap Number",
+                        yaxis_title="Probability Density",
+                        height=400,
+                        hovermode='x unified'
+                    )
+
+                    st.plotly_chart(fig_pdf, use_container_width=True)
+
+                    # Risk Assessment
+                    st.subheader("Risk Assessment")
+
+                    risk_info = bayesian_results['risk_assessment']
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown(f"""
+                        **Risk Level:** {risk_color} **{risk_info['risk_level']}**
+
+                        **Explanation:** {risk_info['explanation']}
+
+                        **Strategy Note:** {risk_info['strategy_note']}
+                        """)
+
+                    with col2:
+                        st.markdown(f"""
+                        **Statistical Details:**
+                        - Posterior Std Dev: {risk_info['posterior_std']:.2f} laps
+                        - Relative Uncertainty: {risk_info['relative_uncertainty']*100:.1f}%
+                        - Time Spread: {risk_info['time_spread_seconds']:.2f} seconds
+                        """)
+
+                    # Simulation results comparison
+                    st.subheader("Simulation Results by Pit Lap")
+
+                    sim_df = pd.DataFrame([
+                        {
+                            'Pit Lap': lap,
+                            'Mean Time (s)': data['mean'],
+                            'Std Dev (s)': data['std']
+                        }
+                        for lap, data in bayesian_results['simulation_results'].items()
+                    ])
+
+                    fig_sim = go.Figure()
+
+                    # Mean times with error bars
+                    fig_sim.add_trace(go.Scatter(
+                        x=sim_df['Pit Lap'],
+                        y=sim_df['Mean Time (s)'],
+                        error_y=dict(
+                            type='data',
+                            array=sim_df['Std Dev (s)'],
+                            visible=True
+                        ),
+                        mode='markers+lines',
+                        name='Expected Race Time',
+                        marker=dict(size=8)
+                    ))
+
+                    # Highlight optimal lap
+                    optimal_row = sim_df[sim_df['Pit Lap'] == bayesian_results['optimal_lap']]
+                    if not optimal_row.empty:
+                        fig_sim.add_trace(go.Scatter(
+                            x=optimal_row['Pit Lap'],
+                            y=optimal_row['Mean Time (s)'],
+                            mode='markers',
+                            name='Optimal',
+                            marker=dict(size=15, color='red', symbol='star')
+                        ))
+
+                    # Shade confidence interval
+                    fig_sim.add_vrect(
+                        x0=interval[0],
+                        x1=interval[1],
+                        fillcolor="green",
+                        opacity=0.2,
+                        layer="below",
+                        line_width=0,
+                        annotation_text=f"{interval_name} Confidence"
+                    )
+
+                    fig_sim.update_layout(
+                        xaxis_title="Pit Lap Number",
+                        yaxis_title="Expected Total Race Time (seconds)",
+                        height=400,
+                        hovermode='x unified'
+                    )
+
+                    st.plotly_chart(fig_sim, use_container_width=True)
+
+                except ImportError as e:
+                    st.warning(f"Bayesian analysis not available: {str(e)}")
+                    st.info("Falling back to simplified pit window calculation...")
+
+                    # Fallback to simple calculation
+                    optimal_start = int(total_laps * 0.33)
+                    optimal_end = int(total_laps * 0.67)
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric("Total Race Laps", int(total_laps))
+
+                    with col2:
+                        st.metric("Optimal Window Start", f"Lap {optimal_start}")
+
+                    with col3:
+                        st.metric("Optimal Window End", f"Lap {optimal_end}")
+                except Exception as e:
+                    st.error(f"Error in Bayesian analysis: {str(e)}")
+                    st.exception(e)
 
                 # Visualize pit window
                 fig = go.Figure()

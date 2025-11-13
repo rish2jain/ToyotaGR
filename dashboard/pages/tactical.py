@@ -9,6 +9,23 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+try:
+    from src.tactical.anomaly_detector import AnomalyDetector
+    ANOMALY_DETECTOR_AVAILABLE = True
+except ImportError:
+    ANOMALY_DETECTOR_AVAILABLE = False
+
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP_AVAILABLE = False
 
 def show_tactical_analysis(data, track, race_num):
     """
@@ -180,79 +197,397 @@ def show_tactical_analysis(data, track, race_num):
 
             st.markdown("---")
 
-            # Anomaly Detection
-            st.header("Anomaly Detection")
+            # Track Map Visualization
+            st.header("🗺️ Track Map: Performance Heatmap")
+
+            try:
+                from src.utils.visualization import create_track_map_with_performance
+
+                # Prepare section data for track map
+                if available_section_cols and 'LAP_NUMBER' in driver_data.columns:
+                    # Create section performance data
+                    section_perf_data = []
+
+                    for section_col in available_section_cols:
+                        section_name = section_col.replace('_SECONDS', '')
+                        section_num = int(section_name[1:]) if len(section_name) > 1 else 1
+
+                        for _, row in driver_data.iterrows():
+                            if pd.notna(row[section_col]):
+                                # Calculate gap to optimal for this section
+                                optimal_time = driver_data[section_col].min()
+                                gap = row[section_col] - optimal_time
+
+                                section_perf_data.append({
+                                    'Section': section_num,
+                                    'Lap': row['LAP_NUMBER'],
+                                    'Time': row[section_col],
+                                    'GapToOptimal': gap
+                                })
+
+                    if section_perf_data:
+                        section_df = pd.DataFrame(section_perf_data)
+
+                        # Determine track name (default to barber)
+                        track_name = 'barber'
+                        if track:
+                            track_name = track.lower()
+
+                        # Create track map
+                        driver_number = int(selected_driver) if pd.notna(selected_driver) else selected_driver
+                        fig_track = create_track_map_with_performance(
+                            section_df,
+                            track_name=track_name,
+                            section_col='Section',
+                            time_col='Time',
+                            gap_col='GapToOptimal',
+                            driver_label=f"Car #{driver_number}"
+                        )
+
+                        if fig_track:
+                            st.plotly_chart(fig_track, use_container_width=True)
+
+                            # Add interpretation help
+                            st.info(
+                                "**How to read this map:**\n"
+                                "- Hover over any section to see detailed performance metrics\n"
+                                "- Green sections = excellent performance (close to your best)\n"
+                                "- Yellow sections = good performance (room for improvement)\n"
+                                "- Orange/Red sections = areas needing focus\n"
+                                "- Click and drag to pan, scroll to zoom"
+                            )
+                        else:
+                            st.warning("Track map visualization unavailable")
+                    else:
+                        st.info("Insufficient section data for track map visualization")
+
+            except ImportError as e:
+                st.warning(f"Track map visualization requires additional dependencies: {str(e)}")
+            except Exception as e:
+                st.error(f"Error creating track map: {str(e)}")
+
+            st.markdown("---")
+
+            # Driver Comparison (if multiple drivers available)
+            if len(available_drivers) > 1:
+                st.header("🏁 Driver Comparison")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    compare_driver = st.selectbox(
+                        "Compare with Driver",
+                        [d for d in available_drivers if d != selected_driver],
+                        format_func=lambda x: f"Car #{int(x)}" if pd.notna(x) else "Unknown"
+                    )
+
+                if compare_driver:
+                    try:
+                        from src.utils.visualization import create_driver_comparison_map
+
+                        # Get comparison driver data
+                        compare_data = sections_df[sections_df['DRIVER_NUMBER'] == compare_driver].copy()
+
+                        if not compare_data.empty and available_section_cols:
+                            # Prepare data for both drivers
+                            driver1_perf = []
+                            driver2_perf = []
+
+                            for section_col in available_section_cols:
+                                section_name = section_col.replace('_SECONDS', '')
+                                section_num = int(section_name[1:]) if len(section_name) > 1 else 1
+
+                                # Driver 1 (selected)
+                                for _, row in driver_data.iterrows():
+                                    if pd.notna(row[section_col]):
+                                        driver1_perf.append({
+                                            'Section': section_num,
+                                            'Time': row[section_col]
+                                        })
+
+                                # Driver 2 (comparison)
+                                for _, row in compare_data.iterrows():
+                                    if pd.notna(row[section_col]):
+                                        driver2_perf.append({
+                                            'Section': section_num,
+                                            'Time': row[section_col]
+                                        })
+
+                            if driver1_perf and driver2_perf:
+                                driver1_df = pd.DataFrame(driver1_perf)
+                                driver2_df = pd.DataFrame(driver2_perf)
+
+                                # Determine track name
+                                track_name = 'barber'
+                                if track:
+                                    track_name = track.lower()
+
+                                # Create comparison map
+                                fig_compare = create_driver_comparison_map(
+                                    driver1_df,
+                                    driver2_df,
+                                    track_name=track_name,
+                                    driver1_label=f"Car #{int(selected_driver)}",
+                                    driver2_label=f"Car #{int(compare_driver)}",
+                                    section_col='Section',
+                                    time_col='Time'
+                                )
+
+                                if fig_compare:
+                                    st.plotly_chart(fig_compare, use_container_width=True)
+
+                                    st.info(
+                                        "**Comparison Guide:**\n"
+                                        "- Red sections: You are faster\n"
+                                        "- Blue sections: Competitor is faster\n"
+                                        "- Gray sections: Similar performance\n"
+                                        "- Hover to see exact time differences"
+                                    )
+                    except Exception as e:
+                        st.error(f"Error creating comparison map: {str(e)}")
+
+            st.markdown("---")
+
+            # Anomaly Detection with SHAP Explanations
+            st.header("Advanced Anomaly Detection")
 
             if 'lap_seconds' in driver_data.columns and len(driver_data) > 5:
-                st.subheader("Lap Time Anomalies")
+                # Detection Method Tabs
+                tab1, tab2 = st.tabs(["Statistical Detection", "ML Detection with SHAP"])
 
-                # Simple anomaly detection using z-score
-                mean_lap = driver_data['lap_seconds'].mean()
-                std_lap = driver_data['lap_seconds'].std()
+                with tab1:
+                    st.subheader("Statistical Anomaly Detection (Z-Score)")
 
-                driver_data['z_score'] = (driver_data['lap_seconds'] - mean_lap) / std_lap
-                driver_data['is_anomaly'] = abs(driver_data['z_score']) > 2
+                    # Simple anomaly detection using z-score
+                    mean_lap = driver_data['lap_seconds'].mean()
+                    std_lap = driver_data['lap_seconds'].std()
 
-                anomalies = driver_data[driver_data['is_anomaly']].copy()
+                    driver_data['z_score'] = (driver_data['lap_seconds'] - mean_lap) / std_lap
+                    driver_data['is_anomaly_stat'] = abs(driver_data['z_score']) > 2
 
-                if len(anomalies) > 0:
-                    st.write(f"**{len(anomalies)} anomalies detected** (laps >2 standard deviations from mean)")
+                    anomalies_stat = driver_data[driver_data['is_anomaly_stat']].copy()
 
-                    # Display anomalies table
-                    anomaly_cols = ['LAP_NUMBER', 'LAP_TIME', 'lap_seconds', 'z_score']
-                    available_anomaly_cols = [col for col in anomaly_cols if col in anomalies.columns]
+                    if len(anomalies_stat) > 0:
+                        st.write(f"**{len(anomalies_stat)} anomalies detected** (laps >2 standard deviations from mean)")
 
-                    if available_anomaly_cols:
-                        anomaly_display = anomalies[available_anomaly_cols].copy()
-                        anomaly_display.columns = ['Lap #', 'Lap Time', 'Seconds', 'Z-Score']
-                        st.dataframe(
-                            anomaly_display.sort_values('Z-Score', ascending=False),
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                else:
-                    st.success("No significant anomalies detected")
+                        # Display anomalies table
+                        anomaly_cols = ['LAP_NUMBER', 'LAP_TIME', 'lap_seconds', 'z_score']
+                        available_anomaly_cols = [col for col in anomaly_cols if col in anomalies_stat.columns]
 
-                # Plot lap times with anomalies highlighted
-                fig = go.Figure()
+                        if available_anomaly_cols:
+                            anomaly_display = anomalies_stat[available_anomaly_cols].copy()
+                            anomaly_display.columns = ['Lap #', 'Lap Time', 'Seconds', 'Z-Score']
+                            st.dataframe(
+                                anomaly_display.sort_values('Z-Score', ascending=False),
+                                hide_index=True,
+                                use_container_width=True
+                            )
+                    else:
+                        st.success("No significant anomalies detected")
 
-                # Normal laps
-                normal_laps = driver_data[~driver_data['is_anomaly']]
-                fig.add_trace(go.Scatter(
-                    x=normal_laps['LAP_NUMBER'],
-                    y=normal_laps['lap_seconds'],
-                    mode='lines+markers',
-                    name='Normal Laps',
-                    line=dict(color='blue', width=2),
-                    marker=dict(size=6)
-                ))
+                    # Plot lap times with anomalies highlighted
+                    fig = go.Figure()
 
-                # Anomalous laps
-                if len(anomalies) > 0:
+                    # Normal laps
+                    normal_laps = driver_data[~driver_data['is_anomaly_stat']]
                     fig.add_trace(go.Scatter(
-                        x=anomalies['LAP_NUMBER'],
-                        y=anomalies['lap_seconds'],
-                        mode='markers',
-                        name='Anomalies',
-                        marker=dict(size=12, color='red', symbol='x')
+                        x=normal_laps['LAP_NUMBER'],
+                        y=normal_laps['lap_seconds'],
+                        mode='lines+markers',
+                        name='Normal Laps',
+                        line=dict(color='blue', width=2),
+                        marker=dict(size=6)
                     ))
 
-                # Add mean line
-                fig.add_hline(
-                    y=mean_lap,
-                    line_dash="dash",
-                    line_color="green",
-                    annotation_text="Mean Lap Time"
-                )
+                    # Anomalous laps
+                    if len(anomalies_stat) > 0:
+                        fig.add_trace(go.Scatter(
+                            x=anomalies_stat['LAP_NUMBER'],
+                            y=anomalies_stat['lap_seconds'],
+                            mode='markers',
+                            name='Anomalies',
+                            marker=dict(size=12, color='red', symbol='x')
+                        ))
 
-                fig.update_layout(
-                    xaxis_title="Lap Number",
-                    yaxis_title="Lap Time (seconds)",
-                    height=400,
-                    hovermode='x unified'
-                )
+                    # Add mean line
+                    fig.add_hline(
+                        y=mean_lap,
+                        line_dash="dash",
+                        line_color="green",
+                        annotation_text="Mean Lap Time"
+                    )
 
-                st.plotly_chart(fig, use_container_width=True)
+                    fig.update_layout(
+                        xaxis_title="Lap Number",
+                        yaxis_title="Lap Time (seconds)",
+                        height=400,
+                        hovermode='x unified'
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with tab2:
+                    st.subheader("ML Anomaly Detection with SHAP Explanations")
+
+                    if not ANOMALY_DETECTOR_AVAILABLE:
+                        st.warning("AnomalyDetector module not available. Check installation.")
+                    elif not SHAP_AVAILABLE:
+                        st.info("SHAP not installed. Install with `pip install shap` for detailed explanations.")
+                        st.write("Basic ML anomaly detection will still work.")
+
+                    # Use AnomalyDetector for ML-based detection
+                    if ANOMALY_DETECTOR_AVAILABLE:
+                        try:
+                            detector = AnomalyDetector()
+
+                            # Run ML anomaly detection
+                            with st.spinner("Running Isolation Forest anomaly detection..."):
+                                ml_result = detector.detect_pattern_anomalies(
+                                    driver_data,
+                                    contamination=0.1
+                                )
+
+                            ml_anomalies = ml_result[ml_result['is_anomaly'] == -1].copy()
+
+                            st.write(f"**{len(ml_anomalies)} anomalies detected** using Isolation Forest")
+
+                            if len(ml_anomalies) > 0:
+                                # Get SHAP explanations if available
+                                if SHAP_AVAILABLE:
+                                    with st.spinner("Generating SHAP explanations..."):
+                                        try:
+                                            explained_anomalies = detector.get_anomaly_explanations(
+                                                ml_anomalies,
+                                                ml_result
+                                            )
+
+                                            # Display anomalies with explanations
+                                            st.subheader("Detected Anomalies with Explanations")
+
+                                            for idx, row in explained_anomalies.iterrows():
+                                                lap_num = row.get('LAP_NUMBER', 'N/A')
+                                                anomaly_score = row.get('anomaly_score', 0)
+                                                confidence = row.get('confidence', 0)
+                                                explanation = row.get('explanation', 'No explanation available')
+
+                                                with st.expander(f"Lap {lap_num} - Anomaly Score: {anomaly_score:.4f}"):
+                                                    col1, col2 = st.columns([2, 1])
+
+                                                    with col1:
+                                                        st.markdown(f"**Explanation:** {explanation}")
+                                                        st.markdown(f"**Confidence:** {confidence:.1%}")
+
+                                                        # Feature importance table
+                                                        st.markdown("**Top Contributing Features:**")
+                                                        feature_data = []
+                                                        for i in range(1, 4):
+                                                            feature = row.get(f'top_feature_{i}', '')
+                                                            contrib = row.get(f'contribution_{i}', 0)
+                                                            if feature:
+                                                                feature_data.append({
+                                                                    'Feature': feature.replace('_', ' ').title(),
+                                                                    'Contribution': f"{contrib:.1%}"
+                                                                })
+
+                                                        if feature_data:
+                                                            st.table(pd.DataFrame(feature_data))
+
+                                                    with col2:
+                                                        # Feature importance bar chart
+                                                        feature_names = []
+                                                        contributions = []
+                                                        for i in range(1, 4):
+                                                            feature = row.get(f'top_feature_{i}', '')
+                                                            contrib = row.get(f'contribution_{i}', 0)
+                                                            if feature:
+                                                                feature_names.append(feature.replace('_', ' ').title())
+                                                                contributions.append(contrib * 100)
+
+                                                        if feature_names:
+                                                            fig = go.Figure(data=[
+                                                                go.Bar(
+                                                                    y=feature_names[::-1],
+                                                                    x=contributions[::-1],
+                                                                    orientation='h',
+                                                                    marker=dict(color='coral')
+                                                                )
+                                                            ])
+                                                            fig.update_layout(
+                                                                title="Feature Importance",
+                                                                xaxis_title="Contribution (%)",
+                                                                height=200,
+                                                                margin=dict(l=0, r=0, t=30, b=0)
+                                                            )
+                                                            st.plotly_chart(fig, use_container_width=True)
+
+                                                    # Show detailed SHAP values in expandable section
+                                                    with st.expander("View Detailed SHAP Values"):
+                                                        st.write("Raw feature values for this lap:")
+                                                        feature_cols = [col for col in available_section_cols if col in row.index]
+                                                        if feature_cols:
+                                                            feature_values = {col: row[col] for col in feature_cols}
+                                                            st.json(feature_values)
+
+                                        except Exception as e:
+                                            st.error(f"Error generating SHAP explanations: {e}")
+                                            # Fall back to basic anomaly display
+                                            display_cols = ['LAP_NUMBER', 'anomaly_score']
+                                            available_display_cols = [col for col in display_cols if col in ml_anomalies.columns]
+                                            st.dataframe(
+                                                ml_anomalies[available_display_cols].sort_values('anomaly_score'),
+                                                hide_index=True,
+                                                use_container_width=True
+                                            )
+                                else:
+                                    # Show basic anomalies without SHAP
+                                    display_cols = ['LAP_NUMBER', 'anomaly_score']
+                                    available_display_cols = [col for col in display_cols if col in ml_anomalies.columns]
+                                    st.dataframe(
+                                        ml_anomalies[available_display_cols].sort_values('anomaly_score'),
+                                        hide_index=True,
+                                        use_container_width=True
+                                    )
+
+                                # Plot anomalies
+                                st.subheader("Anomaly Visualization")
+                                fig = go.Figure()
+
+                                # Normal laps
+                                normal_laps = ml_result[ml_result['is_anomaly'] == 1]
+                                if 'LAP_NUMBER' in normal_laps.columns and 'lap_seconds' in normal_laps.columns:
+                                    fig.add_trace(go.Scatter(
+                                        x=normal_laps['LAP_NUMBER'],
+                                        y=normal_laps['lap_seconds'],
+                                        mode='lines+markers',
+                                        name='Normal Laps',
+                                        line=dict(color='green', width=2),
+                                        marker=dict(size=6)
+                                    ))
+
+                                # Anomalous laps
+                                if 'LAP_NUMBER' in ml_anomalies.columns and 'lap_seconds' in ml_anomalies.columns:
+                                    fig.add_trace(go.Scatter(
+                                        x=ml_anomalies['LAP_NUMBER'],
+                                        y=ml_anomalies['lap_seconds'],
+                                        mode='markers',
+                                        name='Anomalies (ML)',
+                                        marker=dict(size=14, color='red', symbol='diamond')
+                                    ))
+
+                                fig.update_layout(
+                                    xaxis_title="Lap Number",
+                                    yaxis_title="Lap Time (seconds)",
+                                    height=400,
+                                    hovermode='x unified'
+                                )
+
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.success("No anomalies detected by ML model")
+
+                        except Exception as e:
+                            st.error(f"Error running ML anomaly detection: {e}")
+                            st.exception(e)
 
             st.markdown("---")
 

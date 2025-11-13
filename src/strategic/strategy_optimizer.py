@@ -417,6 +417,298 @@ class PitStrategyOptimizer:
         else:
             return "VERY HIGH RISK - Strong chance of losing significant time"
 
+    def calculate_optimal_pit_window_with_uncertainty(self, race_data: pd.DataFrame,
+                                                      tire_model: Dict,
+                                                      race_length: int = 25) -> Dict:
+        """
+        Calculate optimal pit window with Bayesian uncertainty quantification.
+
+        Uses conjugate prior approach:
+        - Prior: Normal distribution over pit lap times
+        - Likelihood: Observed lap time data from Monte Carlo simulations
+        - Posterior: Updated belief with uncertainty quantification
+
+        Args:
+            race_data: DataFrame with current race data
+            tire_model: Tire degradation model from TireDegradationModel
+            race_length: Total race laps (default: 25)
+
+        Returns:
+            Dictionary containing:
+            - optimal_lap: Best estimate for pit lap (posterior mean)
+            - confidence_95: 95% credible interval (lower, upper)
+            - confidence_90: 90% credible interval
+            - confidence_80: 80% credible interval
+            - posterior_mean: Mean of posterior distribution
+            - posterior_std: Standard deviation of posterior
+            - uncertainty: Relative uncertainty (std/mean)
+            - credible_interval: Highest density interval
+            - posterior_samples: Array of samples from posterior distribution
+            - risk_assessment: Qualitative risk assessment
+        """
+        # Determine current lap
+        if 'LAP_NUMBER' in race_data.columns:
+            current_lap = race_data['LAP_NUMBER'].max()
+        elif 'lap_number' in race_data.columns:
+            current_lap = race_data['lap_number'].max()
+        else:
+            current_lap = len(race_data)
+
+        # Prior parameters (from racing experience/historical data)
+        prior_mean = race_length * 0.6  # Typically pit around 60% of race
+        prior_std = 3.0  # Uncertain by ~3 laps
+
+        # Define candidate pit laps
+        earliest_pit = max(5, current_lap + 1)
+        latest_pit = min(race_length - 3, race_length)
+        candidate_laps = np.arange(earliest_pit, latest_pit + 1)
+
+        # Run Monte Carlo simulations for likelihood
+        simulation_results = self._run_simulations(
+            race_data, tire_model, race_length, candidate_laps
+        )
+
+        # Update posterior using Bayesian inference
+        posterior_mean, posterior_std = self._update_posterior(
+            prior_mean, prior_std, simulation_results
+        )
+
+        # Calculate credible intervals
+        confidence_95 = stats.norm.interval(0.95, posterior_mean, posterior_std)
+        confidence_90 = stats.norm.interval(0.90, posterior_mean, posterior_std)
+        confidence_80 = stats.norm.interval(0.80, posterior_mean, posterior_std)
+
+        # Generate posterior samples for visualization
+        posterior_samples = stats.norm.rvs(
+            loc=posterior_mean,
+            scale=posterior_std,
+            size=1000,
+            random_state=42
+        )
+
+        # Clip samples to valid lap range
+        posterior_samples = np.clip(posterior_samples, earliest_pit, latest_pit)
+
+        # Calculate relative uncertainty
+        relative_uncertainty = posterior_std / posterior_mean
+
+        # Risk assessment based on posterior spread
+        risk_assessment = self._assess_uncertainty_risk(
+            posterior_std, relative_uncertainty, simulation_results
+        )
+
+        return {
+            'optimal_lap': int(np.round(posterior_mean)),
+            'confidence_95': (int(confidence_95[0]), int(confidence_95[1])),
+            'confidence_90': (int(confidence_90[0]), int(confidence_90[1])),
+            'confidence_80': (int(confidence_80[0]), int(confidence_80[1])),
+            'posterior_mean': float(posterior_mean),
+            'posterior_std': float(posterior_std),
+            'uncertainty': float(relative_uncertainty),
+            'credible_interval': (int(confidence_95[0]), int(confidence_95[1])),
+            'posterior_samples': posterior_samples.tolist(),
+            'risk_assessment': risk_assessment,
+            'current_lap': int(current_lap),
+            'earliest_pit': int(earliest_pit),
+            'latest_pit': int(latest_pit),
+            'simulation_results': simulation_results
+        }
+
+    def _run_simulations(self, race_data: pd.DataFrame, tire_model: Dict,
+                        race_length: int, candidate_laps: np.ndarray) -> Dict:
+        """
+        Run Monte Carlo simulations for each candidate pit lap.
+
+        Args:
+            race_data: Current race data
+            tire_model: Tire degradation model
+            race_length: Total race laps
+            candidate_laps: Array of candidate pit laps
+
+        Returns:
+            Dictionary mapping lap numbers to race times
+        """
+        simulation_results = {}
+
+        for pit_lap in candidate_laps:
+            race_times = []
+
+            for _ in range(self.simulation_iterations):
+                total_time = self._simulate_stint(
+                    pit_lap, race_length, tire_model
+                )
+                race_times.append(total_time)
+
+            race_times = np.array(race_times)
+
+            simulation_results[int(pit_lap)] = {
+                'mean': float(np.mean(race_times)),
+                'std': float(np.std(race_times)),
+                'samples': race_times.tolist()
+            }
+
+        return simulation_results
+
+    def _update_posterior(self, prior_mean: float, prior_std: float,
+                         simulation_results: Dict) -> Tuple[float, float]:
+        """
+        Update posterior distribution using conjugate normal-normal model.
+
+        Uses weighted average of prior and likelihood based on simulation results.
+
+        Args:
+            prior_mean: Prior mean for optimal pit lap
+            prior_std: Prior standard deviation
+            simulation_results: Dictionary of simulation results per lap
+
+        Returns:
+            Tuple of (posterior_mean, posterior_std)
+        """
+        # Convert simulation results to likelihood
+        # Find lap with minimum expected time (maximum likelihood)
+        optimal_lap = min(simulation_results.keys(),
+                         key=lambda k: simulation_results[k]['mean'])
+
+        # Likelihood parameters from simulation
+        likelihood_mean = float(optimal_lap)
+
+        # Estimate likelihood precision from simulation variance
+        # Lower variance in optimal lap -> higher confidence
+        optimal_std = simulation_results[optimal_lap]['std']
+
+        # Calculate spread of optimal laps across simulations
+        # (how sensitive is optimal choice to randomness)
+        lap_means = [(lap, data['mean']) for lap, data in simulation_results.items()]
+        lap_means_sorted = sorted(lap_means, key=lambda x: x[1])
+
+        # Find laps within 1 second of optimal
+        optimal_time = lap_means_sorted[0][1]
+        competitive_laps = [lap for lap, time in lap_means if time - optimal_time < 1.0]
+
+        if len(competitive_laps) > 1:
+            likelihood_std = float(np.std(competitive_laps))
+        else:
+            likelihood_std = 1.0  # Very certain
+
+        # Conjugate normal-normal update
+        # Precision = 1 / variance
+        prior_precision = 1 / (prior_std ** 2)
+        likelihood_precision = 1 / (likelihood_std ** 2)
+
+        # Posterior precision
+        posterior_precision = prior_precision + likelihood_precision
+        posterior_variance = 1 / posterior_precision
+        posterior_std = np.sqrt(posterior_variance)
+
+        # Posterior mean (weighted average)
+        posterior_mean = (prior_precision * prior_mean +
+                         likelihood_precision * likelihood_mean) / posterior_precision
+
+        return posterior_mean, posterior_std
+
+    def _assess_uncertainty_risk(self, posterior_std: float,
+                                relative_uncertainty: float,
+                                simulation_results: Dict) -> str:
+        """
+        Assess risk based on posterior uncertainty.
+
+        Args:
+            posterior_std: Posterior standard deviation
+            relative_uncertainty: Relative uncertainty (std/mean)
+            simulation_results: Simulation results
+
+        Returns:
+            Risk assessment string
+        """
+        if posterior_std < 1.0:
+            risk_level = "LOW"
+            explanation = "Optimal pit window is well-defined with high confidence"
+        elif posterior_std < 2.0:
+            risk_level = "MODERATE"
+            explanation = "Reasonable confidence in pit window, some timing flexibility"
+        elif posterior_std < 3.0:
+            risk_level = "ELEVATED"
+            explanation = "Significant uncertainty - monitor tire degradation closely"
+        else:
+            risk_level = "HIGH"
+            explanation = "Large uncertainty - pit timing highly sensitive to conditions"
+
+        # Check simulation result spread
+        all_means = [data['mean'] for data in simulation_results.values()]
+        time_spread = max(all_means) - min(all_means)
+
+        if time_spread < 1.0:
+            strategy_note = "Pit timing not critical - minimal time difference"
+        elif time_spread < 3.0:
+            strategy_note = "Moderate advantage from optimal timing"
+        else:
+            strategy_note = "Critical to hit optimal window - large time advantage"
+
+        return {
+            'risk_level': risk_level,
+            'explanation': explanation,
+            'strategy_note': strategy_note,
+            'posterior_std': float(posterior_std),
+            'relative_uncertainty': float(relative_uncertainty),
+            'time_spread_seconds': float(time_spread)
+        }
+
+    def visualize_posterior_distribution(self, posterior_results: Dict) -> Dict:
+        """
+        Create visualization data for posterior distribution.
+
+        Returns plotly-compatible data structures for:
+        - Violin plot of posterior distribution
+        - Confidence interval bars
+        - Risk assessment visualization
+
+        Args:
+            posterior_results: Results from calculate_optimal_pit_window_with_uncertainty
+
+        Returns:
+            Dictionary with visualization data
+        """
+        posterior_samples = np.array(posterior_results['posterior_samples'])
+
+        # Create histogram for distribution visualization
+        hist, bin_edges = np.histogram(posterior_samples, bins=30, density=True)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+        # Calculate theoretical PDF
+        x_range = np.linspace(
+            posterior_results['earliest_pit'],
+            posterior_results['latest_pit'],
+            100
+        )
+        pdf = stats.norm.pdf(
+            x_range,
+            posterior_results['posterior_mean'],
+            posterior_results['posterior_std']
+        )
+
+        visualization_data = {
+            'histogram': {
+                'bin_centers': bin_centers.tolist(),
+                'counts': hist.tolist(),
+                'bin_edges': bin_edges.tolist()
+            },
+            'pdf': {
+                'x': x_range.tolist(),
+                'y': pdf.tolist()
+            },
+            'samples': posterior_samples.tolist(),
+            'confidence_intervals': {
+                '95%': posterior_results['confidence_95'],
+                '90%': posterior_results['confidence_90'],
+                '80%': posterior_results['confidence_80']
+            },
+            'optimal_lap': posterior_results['optimal_lap'],
+            'posterior_mean': posterior_results['posterior_mean'],
+            'risk_assessment': posterior_results['risk_assessment']
+        }
+
+        return visualization_data
+
     def analyze_overcut_opportunity(self, race_data: pd.DataFrame,
                                    competitor_pit_lap: int,
                                    tire_model: Dict,

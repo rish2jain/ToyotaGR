@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple, Any, Optional
 from dataclasses import dataclass
 from datetime import timedelta
 import numpy as np
+import pandas as pd
 
 
 @dataclass
@@ -545,3 +546,133 @@ class IntegrationEngine:
         }
 
         return coaching_templates.get(improvement_type, coaching_templates['general'])
+
+    def integrate_weather_impact(
+        self,
+        recommendations: List[IntegratedInsight],
+        weather_data: Optional[pd.DataFrame] = None
+    ) -> List[IntegratedInsight]:
+        """
+        Adjust all recommendations based on weather conditions.
+
+        This method takes existing recommendations and modifies them based on
+        current weather conditions, adding weather-specific warnings and
+        adjusting expected impacts.
+
+        Args:
+            recommendations: List of existing IntegratedInsight objects
+            weather_data: Weather data DataFrame
+
+        Returns:
+            List of weather-adjusted IntegratedInsight objects
+        """
+        if weather_data is None or weather_data.empty:
+            # No weather data - return original recommendations
+            return recommendations
+
+        try:
+            from .weather_adjuster import WeatherAdjuster
+
+            adjuster = WeatherAdjuster()
+            weather_recommendations = adjuster.generate_weather_recommendations(weather_data)
+
+            if not weather_recommendations or weather_recommendations.get('impact') is None:
+                return recommendations
+
+            impact = weather_recommendations['impact']
+            conditions = weather_recommendations['conditions']
+
+            # Create weather-adjusted recommendations
+            adjusted_recommendations = []
+
+            # Add weather impact as a high-priority insight if conditions are significant
+            if impact.risk_level in ["HIGH", "MEDIUM"]:
+                weather_insight = IntegratedInsight(
+                    insight_type='weather_impact',
+                    priority=1 if impact.risk_level == "HIGH" else 2,
+                    tactical_element="Weather Conditions",
+                    strategic_element=f"Risk Level: {impact.risk_level}",
+                    expected_impact=impact.impact_description,
+                    action_items=[
+                        f"WEATHER: {impact.impact_description}",
+                        f"TIRES: {weather_recommendations['tire_adjustment']}",
+                        f"LAP TIMES: Expect {(impact.lap_time_modifier-1)*100:+.1f}% change"
+                    ] + weather_recommendations['strategic_notes'][:2],
+                    confidence=0.9,
+                    projected_position_gain=0,
+                    chain_of_impact=f"Weather conditions → {impact.impact_description}"
+                )
+                adjusted_recommendations.append(weather_insight)
+
+            # Adjust existing recommendations based on weather
+            for rec in recommendations:
+                adjusted_rec = rec
+
+                # Adjust expected impact for tire-related recommendations
+                if 'tire' in rec.tactical_element.lower() or 'degradation' in rec.tactical_element.lower():
+                    # Modify action items to include weather context
+                    weather_action = f"WEATHER ADJUSTMENT: Tire deg {impact.tire_degradation_multiplier:.2f}x due to conditions"
+                    adjusted_action_items = [weather_action] + rec.action_items
+
+                    # Adjust confidence based on weather uncertainty
+                    adjusted_confidence = rec.confidence * 0.95 if impact.risk_level == "HIGH" else rec.confidence
+
+                    adjusted_rec = IntegratedInsight(
+                        insight_type=rec.insight_type,
+                        priority=rec.priority,
+                        tactical_element=rec.tactical_element,
+                        strategic_element=rec.strategic_element,
+                        expected_impact=f"{rec.expected_impact} (weather-adjusted)",
+                        action_items=adjusted_action_items,
+                        confidence=adjusted_confidence,
+                        projected_position_gain=rec.projected_position_gain,
+                        chain_of_impact=rec.chain_of_impact
+                    )
+
+                # Adjust lap time expectations
+                elif 'lap' in rec.expected_impact.lower() and 's/lap' in rec.expected_impact.lower():
+                    weather_note = f"WEATHER: Lap times affected by {(impact.lap_time_modifier-1)*100:+.1f}% due to conditions"
+                    adjusted_action_items = rec.action_items + [weather_note]
+
+                    adjusted_rec = IntegratedInsight(
+                        insight_type=rec.insight_type,
+                        priority=rec.priority,
+                        tactical_element=rec.tactical_element,
+                        strategic_element=rec.strategic_element,
+                        expected_impact=f"{rec.expected_impact} (weather-adjusted)",
+                        action_items=adjusted_action_items,
+                        confidence=rec.confidence * 0.95 if impact.risk_level == "HIGH" else rec.confidence,
+                        projected_position_gain=rec.projected_position_gain,
+                        chain_of_impact=rec.chain_of_impact
+                    )
+
+                # Flag risky sections
+                elif any(str(section) in rec.tactical_element for section in impact.risky_sections):
+                    risk_warning = f"⚠ WEATHER WARNING: This section has {impact.risk_level} risk in current conditions"
+                    adjusted_action_items = [risk_warning] + rec.action_items
+
+                    # Increase priority if section is risky
+                    adjusted_priority = max(1, rec.priority - 1) if impact.risk_level == "HIGH" else rec.priority
+
+                    adjusted_rec = IntegratedInsight(
+                        insight_type=rec.insight_type,
+                        priority=adjusted_priority,
+                        tactical_element=rec.tactical_element,
+                        strategic_element=rec.strategic_element,
+                        expected_impact=f"{rec.expected_impact} (HIGH WEATHER RISK)",
+                        action_items=adjusted_action_items,
+                        confidence=rec.confidence,
+                        projected_position_gain=rec.projected_position_gain,
+                        chain_of_impact=rec.chain_of_impact
+                    )
+
+                adjusted_recommendations.append(adjusted_rec)
+
+            # Re-prioritize after weather adjustments
+            adjusted_recommendations = self._prioritize_insights(adjusted_recommendations)
+
+            return adjusted_recommendations
+
+        except Exception as e:
+            print(f"Warning: Could not integrate weather impact: {e}")
+            return recommendations
