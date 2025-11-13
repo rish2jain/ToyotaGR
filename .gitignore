@@ -1,9 +1,11 @@
 # Large telemetry data files (exceed GitHub's 100MB limit)
 # These files are too large for standard Git - use Git LFS if needed
 
-# Telemetry data files
+# Telemetry data files (exclude samples)
 **/*telemetry*.csv
 **/*telemetry_data*.csv
+!**/Samples/*telemetry*.csv
+!**/Samples/*telemetry_data*.csv
 
 # macOS system files
 .DS_Store
