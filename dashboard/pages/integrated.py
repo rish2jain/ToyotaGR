@@ -9,6 +9,20 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import sys
+import os
+
+# Add src to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+try:
+    from src.integration.causal_analysis import (
+        CausalStrategyAnalyzer,
+        prepare_race_data_for_causal_analysis,
+        DOWHY_AVAILABLE
+    )
+except ImportError:
+    DOWHY_AVAILABLE = False
 
 def show_integrated_insights(data, track, race_num):
     """
@@ -29,7 +43,7 @@ def show_integrated_insights(data, track, race_num):
         sections_df = data['sections']
         results_df = data.get('results', pd.DataFrame())
 
-        # Driver selection
+        # Driver selection (shared across tabs)
         st.header("Driver Selection")
 
         if 'DRIVER_NUMBER' in sections_df.columns:
@@ -65,12 +79,21 @@ def show_integrated_insights(data, track, race_num):
                 driver_data['lap_seconds'] = driver_data['LAP_TIME'].apply(time_to_seconds)
                 driver_data = driver_data.dropna(subset=['lap_seconds'])
 
-            # Combined Recommendations
-            st.header("Combined Recommendations")
+            # Create tabs for different analysis types
+            tab1, tab2, tab3 = st.tabs([
+                "📊 Recommendations & What-If",
+                "🔬 Causal Analysis",
+                "🎯 Cross-Module Impact"
+            ])
 
-            recommendations = []
+            # TAB 1: Combined Recommendations and What-If Simulator
+            with tab1:
+                # Combined Recommendations
+                st.header("Combined Recommendations")
 
-            # Tactical recommendations
+                recommendations = []
+
+                # Tactical recommendations
             if 'lap_seconds' in driver_data.columns:
                 best_lap = driver_data['lap_seconds'].min()
                 avg_lap = driver_data['lap_seconds'].mean()
@@ -461,6 +484,407 @@ def show_integrated_insights(data, track, race_num):
 
                     else:
                         st.info("Driver not found in results")
+
+            # TAB 2: Causal Analysis
+            with tab2:
+                st.header("🔬 Causal Inference Analysis")
+
+                if not DOWHY_AVAILABLE:
+                    st.error("""
+                    **Causal Analysis Unavailable**
+
+                    The DoWhy library is required for causal inference analysis.
+                    Install it with: `pip install dowhy`
+                    """)
+                else:
+                    st.markdown("""
+                    **Causal inference** goes beyond correlation to establish proper cause-and-effect
+                    relationships. This allows us to answer questions like:
+                    - "What if the driver improved Section 3 by 0.5 seconds?"
+                    - "Does tire age causally affect lap time, or is it just correlated?"
+                    - "What's the causal effect of pit timing on final position?"
+                    """)
+
+                    st.markdown("---")
+
+                    # Analysis type selection
+                    analysis_type = st.selectbox(
+                        "Select Analysis Type",
+                        [
+                            "Section Improvement Effect",
+                            "Pit Strategy Effect",
+                            "Custom Causal Analysis",
+                            "View Causal Graph"
+                        ]
+                    )
+
+                    # Prepare data for causal analysis
+                    try:
+                        causal_data = prepare_race_data_for_causal_analysis(
+                            driver_data,
+                            results_df if not results_df.empty else None
+                        )
+
+                        if len(causal_data) < 20:
+                            st.warning(f"⚠️ Limited data: Only {len(causal_data)} observations. "
+                                      "Causal analysis requires at least 20 for reliable results.")
+
+                        # Initialize analyzer
+                        analyzer = CausalStrategyAnalyzer(min_data_points=15)
+
+                        if analysis_type == "Section Improvement Effect":
+                            st.subheader("Section Improvement Causal Effect")
+
+                            st.markdown("""
+                            This analysis estimates the **causal effect** of improving a specific
+                            section on lap time, controlling for confounding factors like tire age
+                            and fuel load.
+                            """)
+
+                            # Section selection
+                            col1, col2 = st.columns(2)
+
+                            with col1:
+                                section_id = st.selectbox(
+                                    "Select Section",
+                                    [1, 2, 3],
+                                    format_func=lambda x: f"Section {x}"
+                                )
+
+                            with col2:
+                                improvement = st.slider(
+                                    "Improvement (seconds)",
+                                    min_value=0.0,
+                                    max_value=2.0,
+                                    value=0.5,
+                                    step=0.1,
+                                    help="How much faster would the driver be in this section?"
+                                )
+
+                            if st.button("Estimate Causal Effect", type="primary"):
+                                with st.spinner("Running causal analysis..."):
+                                    try:
+                                        # Analyze section improvement effect
+                                        effect = analyzer.analyze_section_improvement_effect(
+                                            causal_data,
+                                            section_id=section_id,
+                                            outcome='lap_time'
+                                        )
+
+                                        # Display results
+                                        st.success("✅ Causal Effect Estimated")
+
+                                        col1, col2, col3 = st.columns(3)
+
+                                        with col1:
+                                            st.metric(
+                                                "Effect Size",
+                                                f"{effect.effect_size:.4f}s/s",
+                                                help="Change in lap time per 1 second improvement in section"
+                                            )
+
+                                        with col2:
+                                            ci_range = effect.confidence_interval[1] - effect.confidence_interval[0]
+                                            st.metric(
+                                                "95% Confidence",
+                                                f"±{ci_range/2:.4f}s",
+                                                help="Uncertainty in the effect estimate"
+                                            )
+
+                                        with col3:
+                                            sig_label = "Significant" if effect.p_value < 0.05 else "Not Significant"
+                                            st.metric(
+                                                "Statistical Significance",
+                                                sig_label,
+                                                help=f"p-value: {effect.p_value:.4f}"
+                                            )
+
+                                        # Interpretation
+                                        st.subheader("Interpretation")
+                                        st.info(effect.interpretation)
+
+                                        # Counterfactual prediction
+                                        st.subheader("Counterfactual Prediction")
+
+                                        current_section_time = causal_data[f'section_{section_id}_time'].mean()
+                                        improved_section_time = current_section_time - improvement
+
+                                        counterfactual = analyzer.estimate_counterfactual(
+                                            data=causal_data,
+                                            treatment=f'section_{section_id}_time',
+                                            outcome='lap_time',
+                                            intervention_value=improved_section_time
+                                        )
+
+                                        st.markdown(f"""
+                                        **Scenario:** Improve Section {section_id} by {improvement:.2f} seconds
+
+                                        - Current avg Section {section_id} time: **{current_section_time:.3f}s**
+                                        - Improved Section {section_id} time: **{improved_section_time:.3f}s**
+                                        - Current avg lap time: **{counterfactual.original_outcome:.3f}s**
+                                        - **Predicted** avg lap time: **{counterfactual.counterfactual_outcome:.3f}s**
+                                        - **Expected improvement:** {counterfactual.effect_size:.3f}s per lap
+
+                                        {counterfactual.practical_interpretation}
+                                        """)
+
+                                        # Robustness check
+                                        st.subheader("Robustness Analysis")
+
+                                        robustness_label = "HIGH" if effect.robustness_score >= 0.75 else \
+                                                          "MODERATE" if effect.robustness_score >= 0.5 else "LOW"
+
+                                        st.metric(
+                                            "Robustness Score",
+                                            f"{effect.robustness_score:.2f}",
+                                            help="Confidence in causal estimate after sensitivity tests"
+                                        )
+
+                                        if effect.robustness_score >= 0.75:
+                                            st.success("✅ Effect is robust to sensitivity tests")
+                                        elif effect.robustness_score >= 0.5:
+                                            st.warning("⚠️ Moderate sensitivity to unmeasured confounding")
+                                        else:
+                                            st.error("❌ Effect may be due to unmeasured confounding")
+
+                                    except Exception as e:
+                                        st.error(f"Error in causal analysis: {str(e)}")
+                                        st.exception(e)
+
+                        elif analysis_type == "Pit Strategy Effect":
+                            st.subheader("Pit Strategy Causal Effect")
+
+                            st.markdown("""
+                            This analysis estimates the **causal effect** of pit timing on race
+                            position, controlling for factors like starting position and pace.
+                            """)
+
+                            # Check if we have pit and position data
+                            if 'pit_lap' not in causal_data.columns or 'final_position' not in causal_data.columns:
+                                st.warning("⚠️ Insufficient data for pit strategy analysis. "
+                                          "Need pit lap and final position information.")
+                            else:
+                                if st.button("Analyze Pit Strategy Effect", type="primary"):
+                                    with st.spinner("Running causal analysis..."):
+                                        try:
+                                            effect = analyzer.analyze_pit_strategy_effect(
+                                                causal_data,
+                                                outcome='final_position'
+                                            )
+
+                                            st.success("✅ Causal Effect Estimated")
+
+                                            # Display results
+                                            col1, col2 = st.columns(2)
+
+                                            with col1:
+                                                st.metric(
+                                                    "Effect Size",
+                                                    f"{effect.effect_size:.4f} positions/lap",
+                                                    help="Change in final position per lap delay in pit timing"
+                                                )
+
+                                            with col2:
+                                                sig_label = "Significant" if effect.p_value < 0.05 else "Not Significant"
+                                                st.metric(
+                                                    "Statistical Significance",
+                                                    sig_label,
+                                                    help=f"p-value: {effect.p_value:.4f}"
+                                                )
+
+                                            st.info(effect.interpretation)
+
+                                        except Exception as e:
+                                            st.error(f"Error in pit strategy analysis: {str(e)}")
+                                            st.exception(e)
+
+                        elif analysis_type == "Custom Causal Analysis":
+                            st.subheader("Custom Causal Analysis")
+
+                            st.markdown("Build your own causal analysis by selecting variables.")
+
+                            # Variable selection
+                            available_vars = [col for col in causal_data.columns
+                                            if col not in ['driver_number', 'lap_number']]
+
+                            col1, col2 = st.columns(2)
+
+                            with col1:
+                                treatment_var = st.selectbox(
+                                    "Treatment Variable",
+                                    available_vars,
+                                    help="The variable you want to intervene on"
+                                )
+
+                            with col2:
+                                outcome_var = st.selectbox(
+                                    "Outcome Variable",
+                                    [v for v in available_vars if v != treatment_var],
+                                    help="The variable you want to measure"
+                                )
+
+                            # Common causes
+                            potential_confounders = [v for v in available_vars
+                                                    if v not in [treatment_var, outcome_var]]
+
+                            common_causes = st.multiselect(
+                                "Control Variables (Confounders)",
+                                potential_confounders,
+                                help="Variables that might affect both treatment and outcome"
+                            )
+
+                            if st.button("Run Causal Analysis", type="primary"):
+                                with st.spinner("Analyzing..."):
+                                    try:
+                                        effect = analyzer.identify_causal_effect(
+                                            data=causal_data,
+                                            treatment=treatment_var,
+                                            outcome=outcome_var,
+                                            common_causes=common_causes if common_causes else None
+                                        )
+
+                                        st.success("✅ Analysis Complete")
+
+                                        col1, col2, col3 = st.columns(3)
+
+                                        with col1:
+                                            st.metric("Effect Size", f"{effect.effect_size:.4f}")
+
+                                        with col2:
+                                            st.metric(
+                                                "Confidence Interval",
+                                                f"[{effect.confidence_interval[0]:.4f}, "
+                                                f"{effect.confidence_interval[1]:.4f}]"
+                                            )
+
+                                        with col3:
+                                            st.metric("P-Value", f"{effect.p_value:.4f}")
+
+                                        st.info(effect.interpretation)
+
+                                        # Robustness
+                                        st.metric("Robustness Score", f"{effect.robustness_score:.2f}")
+
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)}")
+                                        st.exception(e)
+
+                        elif analysis_type == "View Causal Graph":
+                            st.subheader("Causal Graph Visualization")
+
+                            st.markdown("""
+                            This directed acyclic graph (DAG) shows the assumed causal relationships
+                            between racing performance variables.
+                            """)
+
+                            if st.button("Generate Causal Graph"):
+                                with st.spinner("Building causal graph..."):
+                                    try:
+                                        # Build graph
+                                        analyzer.build_causal_graph(causal_data)
+
+                                        # Visualize
+                                        fig = analyzer.visualize_causal_graph()
+
+                                        st.pyplot(fig)
+
+                                        # Show graph info
+                                        st.subheader("Graph Structure")
+
+                                        col1, col2 = st.columns(2)
+
+                                        with col1:
+                                            st.metric("Nodes", analyzer.causal_graph['metadata']['num_nodes'])
+
+                                        with col2:
+                                            st.metric("Edges", analyzer.causal_graph['metadata']['num_edges'])
+
+                                        with st.expander("View Edge List"):
+                                            edges_df = pd.DataFrame(
+                                                analyzer.causal_graph['edges'],
+                                                columns=['From', 'To']
+                                            )
+                                            st.dataframe(edges_df, hide_index=True)
+
+                                    except Exception as e:
+                                        st.error(f"Error generating graph: {str(e)}")
+                                        st.exception(e)
+
+                    except Exception as e:
+                        st.error(f"Error preparing data for causal analysis: {str(e)}")
+                        st.exception(e)
+
+            # TAB 3: Cross-Module Impact (move existing content here)
+            with tab3:
+                st.header("Cross-Module Impact Analysis")
+                st.subheader("How Improvements Affect Overall Performance")
+
+                # This would ideally be the cross-module impact content
+                # For now, show a summary
+                st.info("Cross-module impact analysis shows how tactical improvements "
+                       "(section times, consistency) affect strategic outcomes "
+                       "(pit timing, final position).")
+
+                if 'lap_seconds' in driver_data.columns:
+                    impacts = []
+
+                    # Section improvements (Tactical)
+                    section_cols = ['S1_SECONDS', 'S2_SECONDS', 'S3_SECONDS']
+                    available_sections = [col for col in section_cols if col in driver_data.columns]
+
+                    for col in available_sections:
+                        section_name = col.replace('_SECONDS', '')
+                        optimal = driver_data[col].min()
+                        average = driver_data[col].mean()
+                        gap = average - optimal
+
+                        # Calculate impact on position (simplified)
+                        time_gain_per_lap = gap
+                        total_laps = driver_data['LAP_NUMBER'].max() if 'LAP_NUMBER' in driver_data.columns else 25
+                        total_time_gain = time_gain_per_lap * total_laps
+
+                        impacts.append({
+                            'Improvement Area': f'{section_name} Optimization',
+                            'Module': 'Tactical',
+                            'Time Gain/Lap': f'{time_gain_per_lap:.3f}s',
+                            'Total Race Gain': f'{total_time_gain:.1f}s',
+                            'Difficulty': 'Medium'
+                        })
+
+                    if impacts:
+                        impact_df = pd.DataFrame(impacts)
+                        st.dataframe(impact_df, hide_index=True, use_container_width=True)
+
+                        # Visualize
+                        gains = []
+                        labels = []
+                        for impact in impacts:
+                            try:
+                                gain = float(impact['Total Race Gain'].replace('s', ''))
+                                gains.append(gain)
+                                labels.append(impact['Improvement Area'])
+                            except:
+                                pass
+
+                        if gains:
+                            fig = go.Figure(go.Bar(
+                                x=labels,
+                                y=gains,
+                                marker_color=['#FF6B6B', '#4ECDC4', '#45B7D1'],
+                                text=[f'{g:.1f}s' for g in gains],
+                                textposition='auto'
+                            ))
+
+                            fig.update_layout(
+                                xaxis_title="Improvement Area",
+                                yaxis_title="Total Time Gain (seconds)",
+                                height=400
+                            )
+
+                            st.plotly_chart(fig, use_container_width=True)
+
+                            total_potential = sum(gains)
+                            st.success(f"**Total Potential Time Gain: {total_potential:.1f} seconds**")
 
         else:
             st.warning("No driver data available")

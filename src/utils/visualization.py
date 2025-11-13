@@ -5,7 +5,7 @@ This module provides reusable visualization functions for race data analysis.
 """
 
 import logging
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -868,3 +868,382 @@ def create_driver_comparison_map(
     )
 
     return fig
+
+
+# ============================================================================
+# Racing Line Visualization Functions
+# ============================================================================
+
+
+def create_racing_line_comparison(
+    driver1_line: Dict[str, Any],
+    driver2_line: Dict[str, Any],
+    track_layout: Dict[str, Any],
+    driver1_label: str = "Driver 1",
+    driver2_label: str = "Driver 2"
+) -> 'go.Figure':
+    """
+    Create track map with two racing lines overlaid.
+
+    Shows:
+    - Driver A line (blue)
+    - Driver B line (red)
+    - Entry/Apex/Exit markers
+    - Speed heatmap overlay
+    - Difference annotations
+
+    Args:
+        driver1_line: First driver's reconstructed line
+        driver2_line: Second driver's reconstructed line
+        track_layout: Track layout dictionary from get_track_layout
+        driver1_label: Label for first driver
+        driver2_label: Label for second driver
+
+    Returns:
+        plotly.graph_objects.Figure with racing line comparison
+    """
+    if not PLOTLY_AVAILABLE:
+        logger.error("Plotly is required for racing line visualization")
+        return None
+
+    track_sections = track_layout['sections']
+    track_info = track_layout['track_info']
+
+    # Create figure
+    fig = go.Figure()
+
+    # Draw track outline (gray)
+    for section in track_sections:
+        fig.add_trace(go.Scatter(
+            x=section['x'],
+            y=section['y'],
+            mode='lines',
+            line=dict(color='rgba(128,128,128,0.3)', width=8),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+
+    # Get trajectories
+    traj1 = driver1_line['trajectory']
+    traj2 = driver2_line['trajectory']
+
+    # Map trajectory to track coordinates (approximate)
+    track_x, track_y = _extract_track_coordinates(track_sections)
+
+    # Interpolate trajectories onto track coordinates
+    line1_x, line1_y = _map_trajectory_to_track(traj1, track_x, track_y)
+    line2_x, line2_y = _map_trajectory_to_track(traj2, track_x, track_y)
+
+    # Draw Driver 1 line (blue)
+    fig.add_trace(go.Scatter(
+        x=line1_x,
+        y=line1_y,
+        mode='lines',
+        name=driver1_label,
+        line=dict(color='blue', width=4),
+        opacity=0.7,
+        hovertemplate=f'<b>{driver1_label}</b><br>Distance: %{{customdata[0]:.1f}}%<br>Speed: %{{customdata[1]:.1f}} km/h<extra></extra>',
+        customdata=np.column_stack([traj1['distance'].values[:len(line1_x)], traj1['speed'].values[:len(line1_x)]])
+    ))
+
+    # Draw Driver 2 line (red)
+    fig.add_trace(go.Scatter(
+        x=line2_x,
+        y=line2_y,
+        mode='lines',
+        name=driver2_label,
+        line=dict(color='red', width=4),
+        opacity=0.7,
+        hovertemplate=f'<b>{driver2_label}</b><br>Distance: %{{customdata[0]:.1f}}%<br>Speed: %{{customdata[1]:.1f}} km/h<extra></extra>',
+        customdata=np.column_stack([traj2['distance'].values[:len(line2_x)], traj2['speed'].values[:len(line2_x)]])
+    ))
+
+    # Add corner markers for both drivers
+    corners1 = driver1_line['corners']
+    corners2 = driver2_line['corners']
+
+    for corner in corners1:
+        apex_idx = int(corner['apex'] * len(line1_x) / 100)
+        if apex_idx < len(line1_x):
+            fig.add_trace(go.Scatter(
+                x=[line1_x[apex_idx]],
+                y=[line1_y[apex_idx]],
+                mode='markers',
+                marker=dict(size=10, color='darkblue', symbol='circle', line=dict(width=2, color='white')),
+                showlegend=False,
+                hovertemplate=f'<b>{driver1_label} Apex</b><br>Corner {corner["corner_number"]}<br>Speed: {corner["apex_speed"]:.1f} km/h<extra></extra>'
+            ))
+
+    for corner in corners2:
+        apex_idx = int(corner['apex'] * len(line2_x) / 100)
+        if apex_idx < len(line2_x):
+            fig.add_trace(go.Scatter(
+                x=[line2_x[apex_idx]],
+                y=[line2_y[apex_idx]],
+                mode='markers',
+                marker=dict(size=10, color='darkred', symbol='diamond', line=dict(width=2, color='white')),
+                showlegend=False,
+                hovertemplate=f'<b>{driver2_label} Apex</b><br>Corner {corner["corner_number"]}<br>Speed: {corner["apex_speed"]:.1f} km/h<extra></extra>'
+            ))
+
+    # Add start/finish line
+    if track_sections:
+        first_section = track_sections[0]
+        fig.add_trace(go.Scatter(
+            x=[first_section['x'][0]],
+            y=[first_section['y'][0]],
+            mode='markers+text',
+            marker=dict(size=15, color='white', symbol='square', line=dict(color='black', width=2)),
+            text=['S/F'],
+            textposition='top center',
+            textfont=dict(size=14, color='black', family='Arial Black'),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+
+    # Update layout
+    fig.update_layout(
+        title={
+            'text': f"Racing Line Comparison: {driver1_label} vs {driver2_label}<br><sub>{track_info['name']}</sub>",
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 20}
+        },
+        xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
+        yaxis=dict(visible=False),
+        hovermode='closest',
+        plot_bgcolor='#1a1a1a',
+        paper_bgcolor='#2b2b2b',
+        width=900,
+        height=700,
+        margin=dict(l=20, r=20, t=80, b=20),
+        legend=dict(
+            x=0.02,
+            y=0.98,
+            bgcolor='rgba(255,255,255,0.8)',
+            bordercolor='black',
+            borderwidth=1
+        )
+    )
+
+    return fig
+
+
+def create_corner_analysis(
+    corner_data: Dict[str, Any],
+    driver1_label: str = "Driver 1",
+    driver2_label: str = "Driver 2",
+    differences: List[Dict[str, Any]] = None
+) -> 'go.Figure':
+    """
+    Detailed corner-by-corner comparison.
+
+    Shows:
+    - Brake point comparison
+    - Minimum speed comparison
+    - Apex location
+    - Exit speed comparison
+
+    Args:
+        corner_data: Dictionary with corner comparison data
+        driver1_label: Label for first driver
+        driver2_label: Label for second driver
+        differences: List of corner differences from compare_racing_lines
+
+    Returns:
+        plotly.graph_objects.Figure with corner analysis
+    """
+    if not PLOTLY_AVAILABLE:
+        logger.error("Plotly is required for corner analysis visualization")
+        return None
+
+    if not differences:
+        logger.warning("No corner differences provided for analysis")
+        return None
+
+    # Create subplots for different metrics
+    fig = make_subplots(
+        rows=2,
+        cols=2,
+        subplot_titles=(
+            'Apex Speed Comparison',
+            'Brake Point Comparison',
+            'Corner Radius Comparison',
+            'Speed Delta by Corner'
+        ),
+        specs=[[{'type': 'bar'}, {'type': 'bar'}],
+               [{'type': 'bar'}, {'type': 'scatter'}]]
+    )
+
+    corner_numbers = [d['corner_number'] for d in differences]
+
+    # Apex Speed Comparison
+    apex_speeds_1 = [d[f'{driver1_label}_apex_speed'] for d in differences]
+    apex_speeds_2 = [d[f'{driver2_label}_apex_speed'] for d in differences]
+
+    fig.add_trace(
+        go.Bar(name=driver1_label, x=corner_numbers, y=apex_speeds_1, marker_color='blue'),
+        row=1, col=1
+    )
+    fig.add_trace(
+        go.Bar(name=driver2_label, x=corner_numbers, y=apex_speeds_2, marker_color='red'),
+        row=1, col=1
+    )
+
+    # Brake Point Comparison
+    brake_points_1 = [d[f'{driver1_label}_brake_point'] for d in differences]
+    brake_points_2 = [d[f'{driver2_label}_brake_point'] for d in differences]
+
+    fig.add_trace(
+        go.Bar(name=driver1_label, x=corner_numbers, y=brake_points_1, marker_color='blue', showlegend=False),
+        row=1, col=2
+    )
+    fig.add_trace(
+        go.Bar(name=driver2_label, x=corner_numbers, y=brake_points_2, marker_color='red', showlegend=False),
+        row=1, col=2
+    )
+
+    # Corner Radius Comparison
+    radius_1 = [d[f'{driver1_label}_radius'] for d in differences]
+    radius_2 = [d[f'{driver2_label}_radius'] for d in differences]
+
+    fig.add_trace(
+        go.Bar(name=driver1_label, x=corner_numbers, y=radius_1, marker_color='blue', showlegend=False),
+        row=2, col=1
+    )
+    fig.add_trace(
+        go.Bar(name=driver2_label, x=corner_numbers, y=radius_2, marker_color='red', showlegend=False),
+        row=2, col=1
+    )
+
+    # Speed Delta
+    speed_deltas = [d['apex_speed_delta_kph'] for d in differences]
+    colors = ['green' if delta > 0 else 'orange' for delta in speed_deltas]
+
+    fig.add_trace(
+        go.Bar(
+            x=corner_numbers,
+            y=speed_deltas,
+            marker_color=colors,
+            name='Speed Delta',
+            showlegend=False
+        ),
+        row=2, col=2
+    )
+
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", row=2, col=2)
+
+    # Update axes
+    fig.update_xaxes(title_text="Corner Number", row=1, col=1)
+    fig.update_xaxes(title_text="Corner Number", row=1, col=2)
+    fig.update_xaxes(title_text="Corner Number", row=2, col=1)
+    fig.update_xaxes(title_text="Corner Number", row=2, col=2)
+
+    fig.update_yaxes(title_text="Speed (km/h)", row=1, col=1)
+    fig.update_yaxes(title_text="Distance (%)", row=1, col=2)
+    fig.update_yaxes(title_text="Radius (m)", row=2, col=1)
+    fig.update_yaxes(title_text="Speed Delta (km/h)", row=2, col=2)
+
+    fig.update_layout(
+        title={'text': f"Corner-by-Corner Analysis: {driver1_label} vs {driver2_label}", 'x': 0.5, 'xanchor': 'center'},
+        height=700,
+        showlegend=True,
+        legend=dict(x=0.85, y=0.98),
+        plot_bgcolor='white'
+    )
+
+    return fig
+
+
+def create_speed_trace_comparison(
+    driver1_line: Dict[str, Any],
+    driver2_line: Dict[str, Any],
+    driver1_label: str = "Driver 1",
+    driver2_label: str = "Driver 2",
+    corner_number: Optional[int] = None
+) -> 'go.Figure':
+    """Create speed trace comparison through a corner or full lap."""
+    if not PLOTLY_AVAILABLE:
+        logger.error("Plotly is required for speed trace visualization")
+        return None
+
+    fig = go.Figure()
+
+    traj1 = driver1_line['trajectory']
+    traj2 = driver2_line['trajectory']
+
+    title_suffix = " - Full Lap"
+    if corner_number is not None:
+        corners1 = driver1_line['corners']
+        corners2 = driver2_line['corners']
+
+        if corner_number <= len(corners1) and corner_number <= len(corners2):
+            corner1 = corners1[corner_number - 1]
+            corner2 = corners2[corner_number - 1]
+
+            traj1 = traj1[(traj1['distance'] >= corner1['entry']) & (traj1['distance'] <= corner1['exit'])].copy()
+            traj2 = traj2[(traj2['distance'] >= corner2['entry']) & (traj2['distance'] <= corner2['exit'])].copy()
+            title_suffix = f" - Corner {corner_number}"
+
+    fig.add_trace(go.Scatter(
+        x=traj1['distance'], y=traj1['speed'], mode='lines', name=driver1_label,
+        line=dict(color='blue', width=3),
+        hovertemplate='<b>%{fullData.name}</b><br>Distance: %{x:.1f}%<br>Speed: %{y:.1f} km/h<extra></extra>'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=traj2['distance'], y=traj2['speed'], mode='lines', name=driver2_label,
+        line=dict(color='red', width=3),
+        hovertemplate='<b>%{fullData.name}</b><br>Distance: %{x:.1f}%<br>Speed: %{y:.1f} km/h<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title={'text': f"Speed Trace Comparison: {driver1_label} vs {driver2_label}{title_suffix}", 'x': 0.5, 'xanchor': 'center'},
+        xaxis_title="Distance (%)", yaxis_title="Speed (km/h)",
+        hovermode='x unified', height=500, plot_bgcolor='white', legend=dict(x=0.02, y=0.98)
+    )
+
+    fig.update_xaxes(gridcolor='lightgray')
+    fig.update_yaxes(gridcolor='lightgray')
+
+    return fig
+
+
+def _extract_track_coordinates(track_sections: List[Dict]) -> Tuple[np.ndarray, np.ndarray]:
+    """Extract x, y coordinates from track sections."""
+    x_coords = []
+    y_coords = []
+    for section in track_sections:
+        x_coords.extend(section['x'])
+        y_coords.extend(section['y'])
+    return np.array(x_coords), np.array(y_coords)
+
+
+def _map_trajectory_to_track(
+    trajectory: pd.DataFrame,
+    track_x: np.ndarray,
+    track_y: np.ndarray,
+    lateral_offset_scale: float = 0.1
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Map trajectory distance to track coordinates with lateral offset."""
+    distance_normalized = trajectory['distance'].values / 100.0
+    track_indices = (distance_normalized * (len(track_x) - 1)).astype(int)
+    track_indices = np.clip(track_indices, 0, len(track_x) - 1)
+
+    traj_x = track_x[track_indices]
+    traj_y = track_y[track_indices]
+
+    if 'lateral_offset' in trajectory.columns:
+        lateral_offset = trajectory['lateral_offset'].values[:len(traj_x)]
+        for i in range(len(traj_x)):
+            if i < len(track_x) - 1:
+                dx = track_x[min(track_indices[i] + 1, len(track_x) - 1)] - track_x[track_indices[i]]
+                dy = track_y[min(track_indices[i] + 1, len(track_y) - 1)] - track_y[track_indices[i]]
+                length = np.sqrt(dx**2 + dy**2) + 1e-6
+                perp_x = -dy / length
+                perp_y = dx / length
+                offset = lateral_offset[i] * lateral_offset_scale
+                traj_x[i] += perp_x * offset
+                traj_y[i] += perp_y * offset
+
+    return traj_x, traj_y

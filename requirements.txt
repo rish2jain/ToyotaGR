@@ -25,6 +25,8 @@ shap==0.44.0
 # Optimization & Advanced Analytics
 pymc3==3.11.5
 arviz==0.17.0
+dowhy==0.11.1
+networkx==3.2.1
 
 # Utilities
 python-dateutil==2.8.2

@@ -6,14 +6,17 @@ This module provides comprehensive race strategy analysis including:
 - Tire degradation modeling with predictive analytics
 - Pit strategy optimization using Monte Carlo simulation
 - Undercut/overcut opportunity analysis
+- Multi-driver race simulation with position dynamics
 
 Components:
     - PitStopDetector: Detect pit stops from lap time data
     - TireDegradationModel: Model and predict tire performance
     - PitStrategyOptimizer: Optimize pit strategy decisions
+    - MultiDriverRaceSimulator: Simulate multi-car races with strategy interactions
 
 Example Usage:
     >>> from strategic import PitStopDetector, TireDegradationModel, PitStrategyOptimizer
+    >>> from strategic import MultiDriverRaceSimulator
     >>> import pandas as pd
     >>>
     >>> # Load race data
@@ -35,16 +38,27 @@ Example Usage:
     ...     lap_data, degradation, race_length=25
     ... )
     >>> undercut = optimizer.simulate_undercut_opportunity(lap_data)
+    >>>
+    >>> # Simulate multi-driver race
+    >>> simulator = MultiDriverRaceSimulator(race_length=25)
+    >>> drivers = {
+    ...     'A': {'name': 'Driver A', 'base_lap_time': 95.0, 'tire_deg_rate': 0.05},
+    ...     'B': {'name': 'Driver B', 'base_lap_time': 95.2, 'tire_deg_rate': 0.05}
+    ... }
+    >>> strategies = {'A': {'pit_laps': [12]}, 'B': {'pit_laps': [14]}}
+    >>> result = simulator.simulate_race(drivers, strategies)
 """
 
 from .pit_detector import PitStopDetector
 from .tire_degradation import TireDegradationModel
 from .strategy_optimizer import PitStrategyOptimizer
+from .race_simulation import MultiDriverRaceSimulator
 
 __all__ = [
     'PitStopDetector',
     'TireDegradationModel',
-    'PitStrategyOptimizer'
+    'PitStrategyOptimizer',
+    'MultiDriverRaceSimulator'
 ]
 
 __version__ = '1.0.0'

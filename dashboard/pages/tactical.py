@@ -16,10 +16,11 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 try:
-    from src.tactical.anomaly_detector import AnomalyDetector
+    from src.tactical.anomaly_detector import AnomalyDetector, TENSORFLOW_AVAILABLE
     ANOMALY_DETECTOR_AVAILABLE = True
 except ImportError:
     ANOMALY_DETECTOR_AVAILABLE = False
+    TENSORFLOW_AVAILABLE = False
 
 try:
     import shap
@@ -353,7 +354,7 @@ def show_tactical_analysis(data, track, race_num):
 
             if 'lap_seconds' in driver_data.columns and len(driver_data) > 5:
                 # Detection Method Tabs
-                tab1, tab2 = st.tabs(["Statistical Detection", "ML Detection with SHAP"])
+                tab1, tab2, tab3 = st.tabs(["Statistical Detection", "ML Detection with SHAP", "Deep Learning (LSTM)"])
 
                 with tab1:
                     st.subheader("Statistical Anomaly Detection (Z-Score)")
@@ -587,6 +588,200 @@ def show_tactical_analysis(data, track, race_num):
 
                         except Exception as e:
                             st.error(f"Error running ML anomaly detection: {e}")
+                            st.exception(e)
+
+                with tab3:
+                    st.subheader("Deep Learning LSTM Anomaly Detection")
+
+                    if not ANOMALY_DETECTOR_AVAILABLE:
+                        st.warning("AnomalyDetector module not available. Check installation.")
+                    elif not TENSORFLOW_AVAILABLE:
+                        st.warning(
+                            "TensorFlow is not installed. Install with `pip install tensorflow` "
+                            "to use LSTM-based anomaly detection."
+                        )
+                        st.info(
+                            "**LSTM Anomaly Detection Features:**\n\n"
+                            "- Learns temporal patterns in telemetry sequences\n"
+                            "- Detects complex anomalies that statistical methods miss\n"
+                            "- Uses autoencoder reconstruction error\n"
+                            "- Training time: 30-90 seconds\n"
+                            "- Inference time: <1 second"
+                        )
+                    else:
+                        # Use AnomalyDetector for LSTM-based detection
+                        try:
+                            detector = AnomalyDetector()
+
+                            # Configuration
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                sequence_length = st.slider(
+                                    "Sequence Length",
+                                    min_value=20,
+                                    max_value=100,
+                                    value=50,
+                                    step=10,
+                                    help="Number of time steps per sequence"
+                                )
+                            with col2:
+                                epochs = st.slider(
+                                    "Training Epochs",
+                                    min_value=10,
+                                    max_value=100,
+                                    value=30,
+                                    step=10,
+                                    help="More epochs = better learning but slower"
+                                )
+                            with col3:
+                                contamination = st.slider(
+                                    "Contamination %",
+                                    min_value=1,
+                                    max_value=20,
+                                    value=5,
+                                    step=1,
+                                    help="Expected % of anomalies"
+                                ) / 100
+
+                            # Run LSTM anomaly detection
+                            if st.button("Run LSTM Detection", type="primary"):
+                                with st.spinner(f"Training LSTM autoencoder ({epochs} epochs)... This may take 30-90 seconds"):
+                                    lstm_result = detector.detect_lstm_anomalies(
+                                        driver_data,
+                                        sequence_length=sequence_length,
+                                        epochs=epochs,
+                                        contamination=contamination
+                                    )
+
+                                # Store result in session state
+                                st.session_state['lstm_result'] = lstm_result
+                                st.success("LSTM training complete!")
+
+                            # Display results if available
+                            if 'lstm_result' in st.session_state:
+                                lstm_result = st.session_state['lstm_result']
+                                lstm_anomalies = lstm_result[lstm_result['lstm_is_anomaly']].copy()
+
+                                st.write(f"**{len(lstm_anomalies)} anomalies detected** using LSTM autoencoder")
+
+                                if len(lstm_anomalies) > 0:
+                                    # Display anomalies table
+                                    st.subheader("Detected Anomalies")
+                                    display_cols = ['LAP_NUMBER', 'lap_seconds', 'lstm_reconstruction_error', 'lstm_anomaly_score']
+                                    available_display_cols = [col for col in display_cols if col in lstm_anomalies.columns]
+
+                                    if available_display_cols:
+                                        anomaly_display = lstm_anomalies[available_display_cols].copy()
+                                        anomaly_display.columns = ['Lap #', 'Lap Time (s)', 'Reconstruction Error', 'Anomaly Score']
+                                        st.dataframe(
+                                            anomaly_display.sort_values('Reconstruction Error', ascending=False),
+                                            hide_index=True,
+                                            use_container_width=True
+                                        )
+
+                                    # Plot reconstruction error over time
+                                    st.subheader("Reconstruction Error Over Time")
+                                    fig = go.Figure()
+
+                                    # All laps reconstruction error
+                                    if 'LAP_NUMBER' in lstm_result.columns and 'lstm_reconstruction_error' in lstm_result.columns:
+                                        fig.add_trace(go.Scatter(
+                                            x=lstm_result['LAP_NUMBER'],
+                                            y=lstm_result['lstm_reconstruction_error'],
+                                            mode='lines+markers',
+                                            name='Reconstruction Error',
+                                            line=dict(color='blue', width=2),
+                                            marker=dict(size=6)
+                                        ))
+
+                                        # Highlight anomalies
+                                        if len(lstm_anomalies) > 0:
+                                            fig.add_trace(go.Scatter(
+                                                x=lstm_anomalies['LAP_NUMBER'],
+                                                y=lstm_anomalies['lstm_reconstruction_error'],
+                                                mode='markers',
+                                                name='Anomalies',
+                                                marker=dict(size=12, color='red', symbol='x')
+                                            ))
+
+                                        # Add threshold line
+                                        if hasattr(detector, 'lstm_detector') and detector.lstm_detector and detector.lstm_detector.threshold:
+                                            fig.add_hline(
+                                                y=detector.lstm_detector.threshold,
+                                                line_dash="dash",
+                                                line_color="orange",
+                                                annotation_text="Anomaly Threshold"
+                                            )
+
+                                        fig.update_layout(
+                                            xaxis_title="Lap Number",
+                                            yaxis_title="Reconstruction Error (MSE)",
+                                            height=400,
+                                            hovermode='x unified'
+                                        )
+
+                                        st.plotly_chart(fig, use_container_width=True)
+
+                                    # Comparison: Statistical vs ML vs LSTM
+                                    st.subheader("Method Comparison")
+                                    with st.expander("Compare Detection Methods"):
+                                        comparison_data = []
+
+                                        # Count anomalies from each method
+                                        if 'is_anomaly_stat' in driver_data.columns:
+                                            stat_count = driver_data['is_anomaly_stat'].sum()
+                                            comparison_data.append({
+                                                'Method': 'Statistical (Z-Score)',
+                                                'Anomalies Detected': int(stat_count),
+                                                'Detection Rate': f"{(stat_count / len(driver_data)) * 100:.1f}%"
+                                            })
+
+                                        if 'is_anomaly' in driver_data.columns:
+                                            ml_count = (driver_data['is_anomaly'] == -1).sum()
+                                            comparison_data.append({
+                                                'Method': 'ML (Isolation Forest)',
+                                                'Anomalies Detected': int(ml_count),
+                                                'Detection Rate': f"{(ml_count / len(driver_data)) * 100:.1f}%"
+                                            })
+
+                                        lstm_count = len(lstm_anomalies)
+                                        comparison_data.append({
+                                            'Method': 'Deep Learning (LSTM)',
+                                            'Anomalies Detected': int(lstm_count),
+                                            'Detection Rate': f"{(lstm_count / len(driver_data)) * 100:.1f}%"
+                                        })
+
+                                        if comparison_data:
+                                            comp_df = pd.DataFrame(comparison_data)
+                                            st.table(comp_df)
+
+                                            # Bar chart comparison
+                                            fig = go.Figure(data=[
+                                                go.Bar(
+                                                    x=[d['Method'] for d in comparison_data],
+                                                    y=[d['Anomalies Detected'] for d in comparison_data],
+                                                    marker_color=['steelblue', 'coral', 'mediumseagreen']
+                                                )
+                                            ])
+                                            fig.update_layout(
+                                                title="Anomalies Detected by Method",
+                                                xaxis_title="Detection Method",
+                                                yaxis_title="Number of Anomalies",
+                                                height=400
+                                            )
+                                            st.plotly_chart(fig, use_container_width=True)
+
+                                        st.info(
+                                            "**Method Characteristics:**\n\n"
+                                            "- **Statistical**: Fast, simple, good for obvious outliers\n"
+                                            "- **ML (Isolation Forest)**: Medium speed, detects multivariate patterns\n"
+                                            "- **LSTM**: Slower training, best for temporal/sequential anomalies"
+                                        )
+                                else:
+                                    st.success("No anomalies detected by LSTM model")
+
+                        except Exception as e:
+                            st.error(f"Error running LSTM anomaly detection: {e}")
                             st.exception(e)
 
             st.markdown("---")

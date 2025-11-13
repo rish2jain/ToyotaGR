@@ -22,6 +22,324 @@ try:
 except ImportError:
     SHAP_AVAILABLE = False
 
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import LSTM, Dense, Dropout
+    from tensorflow.keras.callbacks import EarlyStopping
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
+
+
+class LSTMAnomalyDetector:
+    """
+    LSTM-based anomaly detector for time-series telemetry patterns.
+
+    Uses an LSTM autoencoder to learn normal telemetry patterns and detect
+    anomalies based on reconstruction error. High reconstruction error indicates
+    that the pattern is anomalous compared to normal driving behavior.
+
+    Features used:
+    - Speed (KPH or similar)
+    - ThrottlePosition (aps)
+    - BrakePressure (pbrake_f)
+    - SteeringAngle
+    - RPM (nmot)
+    - Gear
+    """
+
+    def __init__(self, sequence_length: int = 50, verbose: int = 0):
+        """
+        Initialize the LSTM anomaly detector.
+
+        Args:
+            sequence_length: Number of time steps in each sequence (default: 50)
+            verbose: Verbosity level for model training (0=silent, 1=progress bar, 2=one line per epoch)
+        """
+        if not TENSORFLOW_AVAILABLE:
+            raise ImportError(
+                "TensorFlow is required for LSTM anomaly detection. "
+                "Install it with: pip install tensorflow"
+            )
+
+        self.sequence_length = sequence_length
+        self.verbose = verbose
+        self.model = None
+        self.feature_scaler = None
+        self.threshold = None
+        self.feature_columns = ['Speed', 'ThrottlePosition', 'BrakePressure',
+                               'SteeringAngle', 'RPM', 'Gear']
+
+    def _build_model(self, n_features: int):
+        """
+        Build LSTM autoencoder model for anomaly detection.
+
+        Architecture:
+        - LSTM encoder (64 units, returns sequences)
+        - LSTM encoder (32 units, compresses to latent representation)
+        - Dense bottleneck (32 units with dropout)
+        - Dense decoder (reconstructs n_features)
+
+        Args:
+            n_features: Number of input features
+
+        Returns:
+            Compiled Keras Sequential model
+        """
+        model = Sequential([
+            LSTM(64, activation='relu', return_sequences=True,
+                 input_shape=(self.sequence_length, n_features)),
+            LSTM(32, activation='relu', return_sequences=False),
+            Dropout(0.2),
+            Dense(32, activation='relu'),
+            Dropout(0.2),
+            Dense(n_features)  # Reconstruct input features
+        ])
+
+        model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+        return model
+
+    def _create_sequences(self, data: np.ndarray) -> Tuple[np.ndarray, List[int]]:
+        """
+        Create sliding window sequences for LSTM input.
+
+        Args:
+            data: 2D array of shape (n_samples, n_features)
+
+        Returns:
+            Tuple of (sequences, original_indices)
+            - sequences: 3D array of shape (n_sequences, sequence_length, n_features)
+            - original_indices: List of indices mapping sequences to original data points
+        """
+        sequences = []
+        indices = []
+
+        for i in range(len(data) - self.sequence_length + 1):
+            sequences.append(data[i:i + self.sequence_length])
+            indices.append(i + self.sequence_length - 1)  # Index of last element in sequence
+
+        return np.array(sequences), indices
+
+    def _filter_normal_laps(self, telemetry_data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Filter data to include only "normal" laps for training.
+
+        Uses bottom 80% of lap times as "normal" to avoid training on outliers.
+
+        Args:
+            telemetry_data: DataFrame with lap times
+
+        Returns:
+            Filtered DataFrame containing only normal laps
+        """
+        if 'LAP_NUMBER' not in telemetry_data.columns:
+            # If no lap numbers, use all data
+            return telemetry_data
+
+        # Calculate lap times if available
+        if 'lap_seconds' in telemetry_data.columns:
+            lap_times = telemetry_data.groupby('LAP_NUMBER')['lap_seconds'].mean()
+            threshold_time = lap_times.quantile(0.8)  # Bottom 80%
+            normal_laps = lap_times[lap_times <= threshold_time].index
+            return telemetry_data[telemetry_data['LAP_NUMBER'].isin(normal_laps)]
+
+        # Default: return all data
+        return telemetry_data
+
+    def _prepare_features(self, telemetry_data: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
+        """
+        Prepare and normalize telemetry features for LSTM.
+
+        Maps available columns to expected feature names and handles missing features.
+
+        Args:
+            telemetry_data: Raw telemetry DataFrame
+
+        Returns:
+            Tuple of (prepared_features_df, available_feature_names)
+        """
+        # Map common column names to expected features
+        column_mapping = {
+            'KPH': 'Speed',
+            'MPH': 'Speed',
+            'SPEED': 'Speed',
+            'aps': 'ThrottlePosition',
+            'THROTTLE': 'ThrottlePosition',
+            'pbrake_f': 'BrakePressure',
+            'BRAKE': 'BrakePressure',
+            'Steering_Angle': 'SteeringAngle',
+            'STEERING': 'SteeringAngle',
+            'nmot': 'RPM',
+            'RPM': 'RPM',
+            'gear': 'Gear',
+            'GEAR': 'Gear'
+        }
+
+        prepared_df = pd.DataFrame()
+        available_features = []
+
+        for original_col, target_col in column_mapping.items():
+            if original_col in telemetry_data.columns:
+                if target_col not in prepared_df.columns:  # Avoid duplicates
+                    prepared_df[target_col] = telemetry_data[original_col]
+                    available_features.append(target_col)
+
+        # Fill missing values with forward fill then backward fill
+        prepared_df = prepared_df.fillna(method='ffill').fillna(method='bfill')
+
+        # If still have NaN, fill with 0
+        prepared_df = prepared_df.fillna(0)
+
+        return prepared_df, available_features
+
+    def detect_pattern_anomalies(
+        self,
+        telemetry_data: pd.DataFrame,
+        epochs: int = 50,
+        batch_size: int = 32,
+        contamination: float = 0.05
+    ) -> pd.DataFrame:
+        """
+        Train LSTM autoencoder on normal laps and detect anomalies by reconstruction error.
+
+        Process:
+        1. Filter normal laps (bottom 80% of lap times)
+        2. Prepare and normalize features
+        3. Create sequences for LSTM
+        4. Train autoencoder on normal data
+        5. Calculate reconstruction errors for all data
+        6. Flag anomalies based on threshold
+
+        Args:
+            telemetry_data: DataFrame containing telemetry data
+            epochs: Number of training epochs (default: 50)
+            batch_size: Batch size for training (default: 32)
+            contamination: Expected proportion of anomalies (default: 0.05)
+
+        Returns:
+            DataFrame with additional columns:
+            - lstm_reconstruction_error: MSE reconstruction error
+            - lstm_is_anomaly: Boolean flag for anomalies
+            - lstm_anomaly_score: Normalized anomaly score (0-1)
+
+        Raises:
+            ValueError: If insufficient data or features
+            ImportError: If TensorFlow is not installed
+        """
+        if telemetry_data.empty:
+            raise ValueError("Telemetry data is empty")
+
+        if len(telemetry_data) < self.sequence_length * 2:
+            raise ValueError(
+                f"Insufficient data: need at least {self.sequence_length * 2} samples, "
+                f"got {len(telemetry_data)}"
+            )
+
+        result_df = telemetry_data.copy()
+
+        # Prepare features
+        features_df, available_features = self._prepare_features(telemetry_data)
+
+        if len(available_features) == 0:
+            raise ValueError(
+                f"No matching features found. Available columns: {telemetry_data.columns.tolist()}"
+            )
+
+        # Normalize features (0-1 scaling)
+        from sklearn.preprocessing import MinMaxScaler
+        self.feature_scaler = MinMaxScaler()
+        features_normalized = self.feature_scaler.fit_transform(features_df[available_features])
+
+        # Create sequences
+        sequences, sequence_indices = self._create_sequences(features_normalized)
+
+        if len(sequences) < 10:
+            raise ValueError(
+                f"Insufficient sequences: need at least 10, got {len(sequences)}"
+            )
+
+        # Filter normal data for training
+        normal_data = self._filter_normal_laps(telemetry_data)
+
+        if len(normal_data) < len(telemetry_data) * 0.5:
+            # If filtering removes too much data, use all data
+            normal_mask = np.ones(len(sequences), dtype=bool)
+        else:
+            # Create mask for normal sequences
+            normal_indices = normal_data.index
+            normal_mask = np.array([
+                telemetry_data.index[idx] in normal_indices
+                for idx in sequence_indices
+            ])
+
+        normal_sequences = sequences[normal_mask]
+
+        if len(normal_sequences) < 5:
+            # Not enough normal data, use all sequences
+            normal_sequences = sequences
+
+        # Build and train model
+        n_features = len(available_features)
+        self.model = self._build_model(n_features)
+
+        # Early stopping to prevent overfitting
+        early_stop = EarlyStopping(
+            monitor='loss',
+            patience=5,
+            restore_best_weights=True
+        )
+
+        # Train on normal data
+        self.model.fit(
+            normal_sequences,
+            normal_sequences[:, -1, :],  # Predict last timestep
+            epochs=epochs,
+            batch_size=batch_size,
+            verbose=self.verbose,
+            callbacks=[early_stop],
+            validation_split=0.2
+        )
+
+        # Calculate reconstruction errors for all sequences
+        predictions = self.model.predict(sequences, verbose=0)
+        actual = sequences[:, -1, :]  # Last timestep of each sequence
+
+        # Mean squared error per sequence
+        reconstruction_errors = np.mean(np.square(actual - predictions), axis=1)
+
+        # Determine threshold (based on contamination parameter)
+        self.threshold = np.percentile(reconstruction_errors, (1 - contamination) * 100)
+
+        # Flag anomalies
+        is_anomaly = reconstruction_errors > self.threshold
+
+        # Normalize scores to 0-1 range
+        max_error = reconstruction_errors.max()
+        min_error = reconstruction_errors.min()
+        if max_error > min_error:
+            anomaly_scores = (reconstruction_errors - min_error) / (max_error - min_error)
+        else:
+            anomaly_scores = np.zeros_like(reconstruction_errors)
+
+        # Map back to original dataframe indices
+        # Initialize columns
+        result_df['lstm_reconstruction_error'] = np.nan
+        result_df['lstm_is_anomaly'] = False
+        result_df['lstm_anomaly_score'] = 0.0
+
+        # Fill in values for sequences
+        for seq_idx, orig_idx in enumerate(sequence_indices):
+            result_df.iloc[orig_idx, result_df.columns.get_loc('lstm_reconstruction_error')] = reconstruction_errors[seq_idx]
+            result_df.iloc[orig_idx, result_df.columns.get_loc('lstm_is_anomaly')] = is_anomaly[seq_idx]
+            result_df.iloc[orig_idx, result_df.columns.get_loc('lstm_anomaly_score')] = anomaly_scores[seq_idx]
+
+        # Forward fill NaN values for rows that weren't in sequences
+        result_df['lstm_reconstruction_error'] = result_df['lstm_reconstruction_error'].fillna(method='bfill')
+        result_df['lstm_anomaly_score'] = result_df['lstm_anomaly_score'].fillna(method='bfill')
+
+        return result_df
+
 
 class AnomalyDetector:
     """
@@ -615,3 +933,55 @@ class AnomalyDetector:
                 result_df.at[idx, 'confidence'] = 0.0
 
         return result_df
+
+    def detect_lstm_anomalies(
+        self,
+        telemetry_data: pd.DataFrame,
+        sequence_length: int = 50,
+        epochs: int = 50,
+        contamination: float = 0.05
+    ) -> pd.DataFrame:
+        """
+        Wrapper method to use LSTM-based anomaly detection (Tier 3 Deep Learning).
+
+        This method uses an LSTM autoencoder to detect complex temporal patterns
+        and anomalies in telemetry data that statistical and ML methods might miss.
+
+        Args:
+            telemetry_data: DataFrame containing telemetry data
+            sequence_length: Number of time steps in each sequence (default: 50)
+            epochs: Number of training epochs (default: 50)
+            contamination: Expected proportion of anomalies (default: 0.05)
+
+        Returns:
+            DataFrame with LSTM anomaly detection results:
+            - lstm_reconstruction_error: MSE reconstruction error
+            - lstm_is_anomaly: Boolean flag for anomalies
+            - lstm_anomaly_score: Normalized anomaly score (0-1)
+
+        Raises:
+            ImportError: If TensorFlow is not installed
+            ValueError: If insufficient data or features
+
+        Example:
+            >>> detector = AnomalyDetector()
+            >>> result = detector.detect_lstm_anomalies(telemetry_df, sequence_length=50, epochs=30)
+            >>> lstm_anomalies = result[result['lstm_is_anomaly']]
+            >>> print(f"Found {len(lstm_anomalies)} LSTM anomalies")
+        """
+        if not TENSORFLOW_AVAILABLE:
+            raise ImportError(
+                "TensorFlow is required for LSTM anomaly detection. "
+                "Install it with: pip install tensorflow"
+            )
+
+        lstm_detector = LSTMAnomalyDetector(
+            sequence_length=sequence_length,
+            verbose=0
+        )
+
+        return lstm_detector.detect_pattern_anomalies(
+            telemetry_data,
+            epochs=epochs,
+            contamination=contamination
+        )

@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 # Import page modules
-from pages import overview, tactical, strategic, integrated
+from pages import overview, tactical, strategic, integrated, race_simulator
 
 # Configure the page
 st.set_page_config(
@@ -143,7 +143,7 @@ def main():
     st.sidebar.subheader("Navigation")
     page = st.sidebar.radio(
         "Select Page",
-        ["🏁 Race Overview", "🎯 Tactical Analysis", "⚙️ Strategic Analysis", "🔗 Integrated Insights"],
+        ["🏁 Race Overview", "🎯 Tactical Analysis", "⚙️ Strategic Analysis", "🔗 Integrated Insights", "🏎️ Race Simulator"],
         label_visibility="collapsed"
     )
 
@@ -169,6 +169,8 @@ def main():
         strategic.show_strategic_analysis(data, track, race_num)
     elif "Integrated" in page:
         integrated.show_integrated_insights(data, track, race_num)
+    elif "Simulator" in page:
+        race_simulator.show_race_simulator(data, track, race_num)
 
     # Footer
     st.sidebar.markdown("---")

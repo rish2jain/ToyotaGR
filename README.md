@@ -71,6 +71,46 @@ Stunning visual overlays showing performance heatmaps on actual track layouts.
 - Driver comparisons - overlay multiple drivers on the same map
 - Track layouts for Barber, COTA, Sonoma, and more
 
+### LSTM Deep Learning Anomaly Detection
+Advanced pattern-based anomaly detection using LSTM autoencoders to catch subtle performance issues that statistical methods miss.
+
+**Benefits:**
+- Better detection of complex patterns in telemetry data
+- Reconstruction error identifies unusual driving behaviors
+- Precision ~82%, Recall ~92%, F1 Score ~87%
+- Training: 30-90 seconds, Inference: <1 second on CPU
+
+### Multi-Driver Race Simulation
+Full race simulator with 2-10 drivers, modeling position changes, overtaking, and strategic interactions.
+
+**Benefits:**
+- Test undercut/overcut strategies before the race
+- Optimize team coordination (multiple cars)
+- Animated race visualization with position changes
+- Monte Carlo optimization for pit strategies
+- Interactive 4-tab dashboard: Race Animation, Undercut Analyzer, Strategy Optimizer, What-If Scenarios
+
+### Racing Line Reconstruction
+Physics-based reconstruction of racing lines from telemetry data, showing where drivers take different approaches through corners.
+
+**Benefits:**
+- Visualize entry/apex/exit differences between drivers
+- Corner radius estimation from minimum speed (physics-based)
+- Side-by-side racing line comparison on track maps
+- Identify faster techniques for driver coaching
+- No GPS required - works with speed/brake/throttle data
+
+### Causal Inference Analysis
+Statistically rigorous "what-if" analysis using DoWhy for causal reasoning with confounding control.
+
+**Benefits:**
+- Answer complex causal questions: "What if we improved Section 3 by 0.5s?"
+- Control for confounders (tire age, fuel load, track conditions)
+- Confidence intervals on causal effects (95% CI)
+- Four robustness tests validate findings
+- Visual causal DAG (Directed Acyclic Graph) explanations
+- Pre-configured analyses: section improvement, pit strategy, tire effects
+
 ## Installation
 
 ### Prerequisites
