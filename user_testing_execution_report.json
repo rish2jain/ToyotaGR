@@ -1,0 +1,121 @@
+{
+  "summary": {
+    "total_tests": 18,
+    "passed": 15,
+    "failed": 3,
+    "warnings": 0
+  },
+  "results": [
+    {
+      "test": "1.1 Verify Installation",
+      "status": "FAIL",
+      "output": "Command timed out after 15 seconds"
+    },
+    {
+      "test": "1.2 Import Streamlit",
+      "status": "PASS",
+      "output": "OK\n"
+    },
+    {
+      "test": "1.2 Import Pandas",
+      "status": "PASS",
+      "output": "OK\n"
+    },
+    {
+      "test": "1.2 Import Plotly",
+      "status": "PASS",
+      "output": "OK\n"
+    },
+    {
+      "test": "1.2 Import NumPy",
+      "status": "PASS",
+      "output": "OK\n"
+    },
+    {
+      "test": "1.2 Import Scikit-learn",
+      "status": "PASS",
+      "output": "OK\n"
+    },
+    {
+      "test": "1.3 Data Files",
+      "status": "PASS",
+      "output": "Found 20 files"
+    },
+    {
+      "test": "2.1 app.py",
+      "status": "PASS",
+      "output": "File exists"
+    },
+    {
+      "test": "2.2 pages/overview.py",
+      "status": "PASS",
+      "output": "File exists"
+    },
+    {
+      "test": "2.3 pages/tactical.py",
+      "status": "PASS",
+      "output": "File exists"
+    },
+    {
+      "test": "2.4 pages/strategic.py",
+      "status": "PASS",
+      "output": "File exists"
+    },
+    {
+      "test": "2.5 pages/integrated.py",
+      "status": "PASS",
+      "output": "File exists"
+    },
+    {
+      "test": "2.6 pages/race_simulator.py",
+      "status": "PASS",
+      "output": "File exists"
+    },
+    {
+      "test": "3.1 DataLoader",
+      "status": "PASS",
+      "output": "OK\n"
+    },
+    {
+      "test": "3.2 AnomalyDetector",
+      "status": "FAIL",
+      "output": "Command timed out after 30 seconds"
+    },
+    {
+      "test": "3.3 PitStrategyOptimizer",
+      "status": "PASS",
+      "output": "OK\n"
+    },
+    {
+      "test": "3.4 IntegrationEngine",
+      "status": "PASS",
+      "output": "OK\n"
+    },
+    {
+      "test": "4.1 Functional Tests",
+      "status": "FAIL",
+      "output": "Command timed out after 30 seconds"
+    }
+  ],
+  "browser_test_guide": {
+    "dashboard_url": "http://localhost:8501",
+    "instructions": "\nTo complete browser testing, follow these steps:\n\n1. Ensure dashboard is running:\n   streamlit run dashboard/app.py\n\n2. Open browser and navigate to: http://localhost:8501\n\n3. Test each page following the scenarios in docs/USER_TESTING_GUIDE.md:\n\n   RACE OVERVIEW:\n   - Select track: barber, race: 1\n   - Verify 4 metrics displayed (Total Drivers, Total Laps, Top Speed, Fastest Lap)\n   - Check leaderboard table displays\n   - Verify charts render (Fastest Lap, Completion Status, Section Performance)\n   - Check weather widget displays\n\n   TACTICAL ANALYSIS:\n   - Select a driver from dropdown\n   - Verify performance metrics display\n   - Check section heatmap renders\n   - Test anomaly detection (Statistical and ML with SHAP tabs)\n   - Verify coaching recommendations display\n\n   STRATEGIC ANALYSIS:\n   - Select a driver\n   - Check pit stop detection works\n   - Verify tire degradation curve displays\n   - Test Bayesian analysis (adjust confidence slider)\n   - Check strategy comparison\n\n   INTEGRATED INSIGHTS:\n   - Select a driver\n   - Verify combined recommendations\n   - Test what-if simulator (adjust sliders)\n   - Check impact visualization\n\n   RACE SIMULATOR:\n   - Configure drivers\n   - Run simulation\n   - Verify results display\n\n4. Test cross-page consistency:\n   - Select driver on one page\n   - Navigate to another page\n   - Verify data matches\n\n5. Test track switching:\n   - Switch between tracks\n   - Verify data updates correctly\n        ",
+    "test_scenarios": [
+      "Race Overview - Metrics Display",
+      "Race Overview - Leaderboard",
+      "Race Overview - Charts",
+      "Tactical Analysis - Driver Selection",
+      "Tactical Analysis - Section Heatmap",
+      "Tactical Analysis - Anomaly Detection",
+      "Tactical Analysis - Recommendations",
+      "Strategic Analysis - Pit Stops",
+      "Strategic Analysis - Tire Degradation",
+      "Strategic Analysis - Bayesian Analysis",
+      "Integrated Insights - Recommendations",
+      "Integrated Insights - What-If Simulator",
+      "Race Simulator - Race Animation",
+      "Cross-Page Data Consistency",
+      "Track Switching"
+    ]
+  }
+}

@@ -786,3 +786,98 @@ def prepare_lap_by_lap_csv(lap_by_lap: List[Dict]) -> pd.DataFrame:
             })
 
     return pd.DataFrame(rows)
+
+# Main entry point for Streamlit multi-page app
+def main():
+    """Main entry point for standalone page execution"""
+    import sys
+    import os
+    
+    # Try to get data from session state (set by app.py)
+    if 'race_data' in st.session_state:
+        data = st.session_state['race_data']
+        track = st.session_state.get('track', 'barber')
+        race_num = st.session_state.get('race_num', 1)
+        show_race_simulator(data, track, race_num)
+    else:
+        # Fallback: load data directly (for direct navigation)
+        try:
+            @st.cache_data
+            def load_race_data_local(track="barber", race_num=1):
+                """Load race data from CSV files"""
+                try:
+                    from pathlib import Path
+                    base_path = Path(__file__).parent.parent.parent / "Data"
+                    track_map = {
+                        "barber": "barber",
+                        "cota": "COTA",
+                        "sonoma": "Sonoma",
+                        "indianapolis": "indianapolis",
+                        "road-america": "road-america/Road America",
+                        "sebring": "sebring/Sebring"
+                    }
+                    track_folder = track_map.get(track.lower(), "barber")
+                    
+                    if track.lower() in ["barber", "cota", "sonoma"]:
+                        if track.lower() == "barber":
+                            race_folder = base_path / track_folder
+                        else:
+                            race_folder = base_path / track_folder / f"Race {race_num}"
+                    else:
+                        race_folder = base_path / track_folder / f"Race {race_num}"
+                    
+                    data = {}
+                    results_files = list(race_folder.glob("03_*Results*.CSV")) + list(race_folder.glob("03_*Results*.csv"))
+                    if results_files:
+                        data['results'] = pd.read_csv(results_files[0], delimiter=';')
+                    
+                    section_files = list(race_folder.glob("23_*Sections*.CSV")) + list(race_folder.glob("23_*Sections*.csv"))
+                    if section_files:
+                        data['sections'] = pd.read_csv(section_files[0], delimiter=';')
+                    
+                    lap_files = list(race_folder.glob("*lap_time*.csv"))
+                    if lap_files:
+                        data['lap_times'] = pd.read_csv(lap_files[0])
+                    
+                    best_lap_files = list(race_folder.glob("99_*Best*.CSV")) + list(race_folder.glob("99_*Best*.csv"))
+                    if best_lap_files:
+                        data['best_laps'] = pd.read_csv(best_lap_files[0], delimiter=';')
+                    
+                    weather_files = list(race_folder.glob("26_*Weather*.CSV")) + list(race_folder.glob("26_*Weather*.csv"))
+                    if weather_files:
+                        data['weather'] = pd.read_csv(weather_files[0], delimiter=';')
+                    
+                    return data
+                except Exception as e:
+                    st.error(f"Error loading data: {str(e)}")
+                    return {}
+            
+            # Sidebar for track/race selection
+            st.sidebar.subheader("Race Selection")
+            track = st.sidebar.selectbox(
+                "Select Track",
+                ["barber", "cota", "sonoma", "indianapolis", "road-america", "sebring"],
+                format_func=lambda x: x.replace("-", " ").title(),
+                key="simulator_track"
+            )
+            
+            race_num = st.sidebar.selectbox(
+                "Select Race",
+                [1, 2],
+                key="simulator_race"
+            )
+            
+            with st.spinner("Loading race data..."):
+                data = load_race_data_local(track, race_num)
+            
+            if data:
+                show_race_simulator(data, track, race_num)
+            else:
+                st.error("Failed to load race data. Please check the data directory.")
+        except Exception as e:
+            st.error(f"Error loading page: {str(e)}")
+            st.exception(e)
+
+# Run main if this is executed as a script (for Streamlit multi-page)
+if __name__ == "__main__":
+    main()

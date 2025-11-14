@@ -15,6 +15,7 @@ RaceIQ Pro is an AI-powered racing analytics platform that transforms raw teleme
 ## Key Features
 
 ### 1. Tactical Analysis Module
+
 - **Section-by-Section Performance Analysis**: Granular breakdown of lap performance across track sectors
 - **Anomaly Detection**: Machine learning-based identification of performance outliers using Isolation Forest
 - **Driver Coaching**: Automated feedback on braking points, corner entry/exit, and consistency
@@ -22,6 +23,7 @@ RaceIQ Pro is an AI-powered racing analytics platform that transforms raw teleme
 - **Real-time Insights**: Identify areas for immediate improvement
 
 ### 2. Strategic Analysis Module
+
 - **Tire Degradation Modeling**: Predictive models for tire performance over race distance
 - **Pit Strategy Optimization**: Monte Carlo simulation for optimal pit timing
 - **Position Impact Analysis**: Quantify the value of track position and overtaking opportunities
@@ -29,61 +31,91 @@ RaceIQ Pro is an AI-powered racing analytics platform that transforms raw teleme
 - **Race Simulation**: What-if analysis for different race scenarios
 
 ### 3. Integration Engine
+
 - **Cross-Module Intelligence**: Connect tactical insights with strategic recommendations
 - **Unified Dashboard**: Single interface for all analytics
 - **Data Pipeline**: Automated ETL from raw telemetry to actionable insights
 - **Export Capabilities**: Reports and visualizations for team review
 
+## Documentation
+
+📚 **Complete documentation is available in the [`docs/`](./docs/) directory.**
+
+### Quick Links
+
+- **[Quick Start Guide](./docs/QUICK_START.md)** - Get started in 5 minutes
+- **[Implementation Guide](./docs/IMPLEMENTATION.md)** - Complete architecture overview
+- **[Documentation Index](./docs/README.md)** - Full documentation catalog
+
+### Key Documentation
+
+- **Quick References**: Setup, SHAP, Bayesian, Weather integration
+- **Feature Docs**: LSTM, Causal Inference, Racing Line, Race Simulation
+- **Module Docs**: Tactical, Strategic, Integration Engine
+- **Research**: Dataset analysis and project recommendations
+
 ## Advanced Features
 
 ### SHAP Explainability
+
 Understand **WHY** anomalies were detected with feature importance analysis powered by SHAP (SHapley Additive exPlanations). Get detailed breakdowns showing which telemetry factors (speed, braking, throttle, etc.) contributed most to performance issues.
 
 **Benefits:**
+
 - Transparent AI decisions - see exactly what triggered each anomaly
 - Feature importance rankings - know which factors matter most
 - Actionable insights - focus on the right improvements
 
 ### Bayesian Uncertainty Quantification
+
 Get confidence intervals on strategic recommendations: "90% confident: pit window laps 13-17"
 
 **Benefits:**
+
 - Statistical rigor - know how certain your strategy recommendations are
 - Risk assessment - understand the uncertainty in predictions
 - Multiple confidence levels - view 80%, 90%, and 95% intervals
 - Probabilistic forecasting - see the full distribution, not just point estimates
 
 ### Weather Integration
+
 Real-time track condition adjustments for tire degradation and lap times based on temperature, humidity, wind, and precipitation.
 
 **Benefits:**
+
 - Hot track (>40°C): +10-20% tire degradation - adjust pit strategy earlier
 - Cold track (<25°C): -5-10% degradation - extend stint lengths
 - Rain conditions: +10% lap times - recalculate race pace
 - Weather-aware recommendations - factor real-world conditions into every decision
 
 ### Interactive Track Map Visualization
+
 Stunning visual overlays showing performance heatmaps on actual track layouts.
 
 **Benefits:**
+
 - Color-coded sections (red=slow, green=fast) - instantly see problem areas
 - Interactive maps - click sections for detailed breakdowns
 - Driver comparisons - overlay multiple drivers on the same map
 - Track layouts for Barber, COTA, Sonoma, and more
 
 ### LSTM Deep Learning Anomaly Detection
+
 Advanced pattern-based anomaly detection using LSTM autoencoders to catch subtle performance issues that statistical methods miss.
 
 **Benefits:**
+
 - Better detection of complex patterns in telemetry data
 - Reconstruction error identifies unusual driving behaviors
 - Precision ~82%, Recall ~92%, F1 Score ~87%
 - Training: 30-90 seconds, Inference: <1 second on CPU
 
 ### Multi-Driver Race Simulation
+
 Full race simulator with 2-10 drivers, modeling position changes, overtaking, and strategic interactions.
 
 **Benefits:**
+
 - Test undercut/overcut strategies before the race
 - Optimize team coordination (multiple cars)
 - Animated race visualization with position changes
@@ -91,9 +123,11 @@ Full race simulator with 2-10 drivers, modeling position changes, overtaking, an
 - Interactive 4-tab dashboard: Race Animation, Undercut Analyzer, Strategy Optimizer, What-If Scenarios
 
 ### Racing Line Reconstruction
+
 Physics-based reconstruction of racing lines from telemetry data, showing where drivers take different approaches through corners.
 
 **Benefits:**
+
 - Visualize entry/apex/exit differences between drivers
 - Corner radius estimation from minimum speed (physics-based)
 - Side-by-side racing line comparison on track maps
@@ -101,9 +135,11 @@ Physics-based reconstruction of racing lines from telemetry data, showing where 
 - No GPS required - works with speed/brake/throttle data
 
 ### Causal Inference Analysis
+
 Statistically rigorous "what-if" analysis using DoWhy for causal reasoning with confounding control.
 
 **Benefits:**
+
 - Answer complex causal questions: "What if we improved Section 3 by 0.5s?"
 - Control for confounders (tire age, fuel load, track conditions)
 - Confidence intervals on causal effects (95% CI)
@@ -114,6 +150,7 @@ Statistically rigorous "what-if" analysis using DoWhy for causal reasoning with 
 ## Installation
 
 ### Prerequisites
+
 - Python 3.9 or higher
 - pip package manager
 - Virtual environment (recommended)
@@ -121,12 +158,14 @@ Statistically rigorous "what-if" analysis using DoWhy for causal reasoning with 
 ### Setup Instructions
 
 1. **Clone the repository**
+
    ```bash
    git clone <repository-url>
    cd ToyotaGR
    ```
 
 2. **Create and activate virtual environment**
+
    ```bash
    # On Windows
    python -m venv venv
@@ -138,6 +177,7 @@ Statistically rigorous "what-if" analysis using DoWhy for causal reasoning with 
    ```
 
 3. **Install dependencies**
+
    ```bash
    pip install -r requirements.txt
    ```
@@ -147,16 +187,66 @@ Statistically rigorous "what-if" analysis using DoWhy for causal reasoning with 
    python -c "import streamlit; import pandas; import sklearn; print('All dependencies installed successfully!')"
    ```
 
+## Troubleshooting
+
+### Mutex Lock Errors on M-series Mac (Apple Silicon)
+
+If you encounter mutex lock errors on macOS (particularly M1/M2/M3 Macs) with errors like:
+```
+[mutex.cc : 452] RAW: Lock blocking 0x103e0a398   @
+```
+
+This issue can cause:
+- Python scripts to hang indefinitely
+- Streamlit dashboard to be non-responsive
+- Test scripts to fail execution
+
+**Solution:**
+
+Create a fresh virtual environment and reinstall dependencies without cache:
+
+```bash
+# 1. Create a new virtual environment
+python3 -m venv venv_fresh
+
+# 2. Activate the fresh environment
+source venv_fresh/bin/activate
+
+# 3. Upgrade pip
+pip install --upgrade pip
+
+# 4. Install dependencies without cache
+pip install --no-cache-dir -r requirements.txt
+
+# 5. Run the application
+streamlit run dashboard/app.py
+```
+
+**Root Cause:**
+The mutex lock errors are typically caused by:
+- Corrupted package installations in the virtual environment
+- Conflicts between cached compiled extensions
+- Incompatibility between NumPy/SciPy versions and Apple Silicon architecture
+
+The fresh installation resolves these issues by ensuring all dependencies are freshly compiled for your system.
+
+**Prevention:**
+- Always use `--no-cache-dir` when installing scientific Python packages on Apple Silicon
+- Keep NumPy and SciPy versions synchronized
+- Consider using Docker for consistent environments across platforms
+
 ## Usage
 
 ### Running the Streamlit Application
 
 1. **Start the Streamlit app**
+
    ```bash
-   streamlit run app.py
+   streamlit run dashboard/app.py
    ```
 
 2. **Access the web interface**
+
    - Open your browser to `http://localhost:8501`
    - The application will automatically reload when you make changes
 
@@ -207,6 +297,7 @@ Data/
 ```
 
 ### Data Files Included
+
 - Race results (official and provisional)
 - Lap timing data (start, end, duration)
 - Section-by-section analysis
@@ -215,7 +306,9 @@ Data/
 - Circuit maps (PDF)
 
 ### Large Telemetry Files
+
 High-frequency telemetry data (800MB-3.4GB per file) is excluded from Git. These files contain:
+
 - Speed, throttle, brake pressure, gear position
 - 10-100 Hz sampling rate
 - Full race distance
@@ -279,24 +372,29 @@ ToyotaGR/
 ## Technical Stack
 
 ### Data Processing
+
 - **pandas**: Data manipulation and analysis
 - **numpy**: Numerical computing
 - **scipy**: Scientific computing and optimization
 
 ### Machine Learning
+
 - **scikit-learn**: Isolation Forest for anomaly detection
 - **SHAP**: Model interpretability and feature importance
 
 ### Visualization
+
 - **Streamlit**: Interactive web application framework
 - **Plotly**: Interactive visualizations
 - **matplotlib/seaborn**: Static plots and charts
 
 ### Statistical Analysis
+
 - **statsmodels**: Time series analysis and regression
 - **pymc3/arviz**: Bayesian inference for uncertainty quantification
 
 ### Optimization
+
 - **scipy.optimize**: Pit strategy optimization
 - **numpy**: Monte Carlo simulation
 
@@ -319,6 +417,7 @@ RaceIQ Pro directly addresses the hackathon's core objectives:
 ## Future Enhancements
 
 ### Phase 2 Features
+
 - [ ] Deep learning LSTM models for multi-lap anomaly detection
 - [ ] Real-time telemetry streaming and analysis
 - [ ] Driver comparison and peer benchmarking
@@ -326,6 +425,7 @@ RaceIQ Pro directly addresses the hackathon's core objectives:
 - [ ] Integration with pit crew communication systems
 
 ### Phase 3 Features
+
 - [ ] Multi-car race simulation with overtaking dynamics
 - [ ] Predictive lap time modeling using track evolution
 - [ ] Automated report generation for post-race debrief
@@ -333,6 +433,7 @@ RaceIQ Pro directly addresses the hackathon's core objectives:
 - [ ] Integration with onboard video for visual coaching
 
 ### Advanced Analytics
+
 - [ ] Causal inference for setup changes
 - [ ] Transfer learning across different tracks
 - [ ] Reinforcement learning for optimal racing line
@@ -341,6 +442,7 @@ RaceIQ Pro directly addresses the hackathon's core objectives:
 ## Performance Metrics
 
 RaceIQ Pro has been validated on historical Toyota GR Cup data:
+
 - Analyzed 7 tracks (Barber, COTA, Indianapolis, Road America, Sebring, Sonoma, VIR)
 - Processed 1000+ laps across multiple races
 - Identified 15-20% of laps as anomalies requiring investigation

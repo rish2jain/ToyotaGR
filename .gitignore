@@ -264,3 +264,27 @@ results/*.json
 
 # Benchmark data
 benchmarks/data/
+
+# ===================================
+# Archive and Temporary Files
+# ===================================
+
+# Archive folders (historical documentation)
+archive/
+*.archive
+
+# Generated HTML visualizations (keep examples/ but ignore root level)
+*.html
+!examples/*.html
+!docs/**/*.html
+
+# Generated analysis results
+*_results.json
+*_results.txt
+analysis_results.json
+test_results.txt
+
+# Temporary analysis outputs
+corner_analysis.html
+racing_line_comparison.html
+speed_trace_comparison.html

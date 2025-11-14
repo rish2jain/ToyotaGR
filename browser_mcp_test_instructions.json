@@ -1,0 +1,82 @@
+{
+  "dashboard_urls": [
+    "http://localhost:8501",
+    "http://localhost:8502"
+  ],
+  "test_scenarios": [
+    {
+      "name": "Race Overview - Page Load",
+      "steps": [
+        "browser_navigate('http://localhost:8501')",
+        "browser_wait_for(time=5)",
+        "browser_snapshot()",
+        "Check for 'RaceIQ Pro' title and sidebar"
+      ]
+    },
+    {
+      "name": "Race Overview - Track Selection",
+      "steps": [
+        "Find track selector dropdown",
+        "browser_click(element='Track selector', ref='select')",
+        "Select 'barber' option",
+        "browser_wait_for(time=2)",
+        "browser_snapshot()"
+      ]
+    },
+    {
+      "name": "Race Overview - Metrics",
+      "steps": [
+        "browser_snapshot()",
+        "Verify 4 metrics displayed",
+        "Check values are > 0"
+      ]
+    },
+    {
+      "name": "Tactical Analysis - Navigation",
+      "steps": [
+        "browser_click(element='Tactical Analysis link', ref='text=Tactical')",
+        "browser_wait_for(time=3)",
+        "browser_snapshot()"
+      ]
+    },
+    {
+      "name": "Tactical Analysis - Driver Selection",
+      "steps": [
+        "Find driver dropdown",
+        "browser_click(element='Driver selector', ref='select')",
+        "Select a driver",
+        "browser_wait_for(time=2)",
+        "browser_snapshot()"
+      ]
+    },
+    {
+      "name": "Strategic Analysis - Bayesian Slider",
+      "steps": [
+        "Navigate to Strategic Analysis",
+        "Find confidence level slider",
+        "browser_evaluate(function='() => { const slider = document.querySelector(\"input[type=\\\"range\\\"]\"); return slider ? slider.value : null; }')",
+        "Adjust slider",
+        "Verify intervals update"
+      ]
+    },
+    {
+      "name": "Integrated Insights - What-If Simulator",
+      "steps": [
+        "Navigate to Integrated Insights",
+        "Find slider elements",
+        "browser_evaluate(function='() => { const sliders = document.querySelectorAll(\"input[type=\\\"range\\\"]\"); return sliders.length; }')",
+        "Adjust sliders",
+        "Check results update"
+      ]
+    }
+  ],
+  "browser_mcp_tools": {
+    "browser_navigate": "Navigate to a URL",
+    "browser_snapshot": "Capture page accessibility snapshot",
+    "browser_click": "Click on an element",
+    "browser_type": "Type into input fields",
+    "browser_evaluate": "Run JavaScript to check page state",
+    "browser_wait_for": "Wait for page to load or text to appear",
+    "browser_take_screenshot": "Take screenshot of page"
+  }
+}

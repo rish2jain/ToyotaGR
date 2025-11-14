@@ -23,8 +23,9 @@ statsmodels==0.14.1
 shap==0.44.0
 
 # Optimization & Advanced Analytics
-pymc3==3.11.5
-arviz==0.17.0
+# Note: pymc3 removed due to numpy version conflict (not used - Bayesian uses scipy.stats only)
+# pymc3==3.11.5  # Requires numpy<1.22.2, conflicts with other packages
+# arviz==0.17.0  # Requires pymc3
 dowhy==0.11.1
 networkx==3.2.1
 

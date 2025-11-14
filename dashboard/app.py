@@ -97,7 +97,10 @@ def load_race_data(track="barber", race_num=1):
         # Load section analysis
         section_files = list(race_folder.glob("23_*Sections*.CSV")) + list(race_folder.glob("23_*Sections*.csv"))
         if section_files:
-            data['sections'] = pd.read_csv(section_files[0], delimiter=';')
+            sections_df = pd.read_csv(section_files[0], delimiter=';')
+            # Normalize column names by stripping whitespace
+            sections_df.columns = sections_df.columns.str.strip()
+            data['sections'] = sections_df
 
         # Load lap times
         lap_files = list(race_folder.glob("*lap_time*.csv"))

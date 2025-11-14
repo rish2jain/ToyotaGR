@@ -1,0 +1,123 @@
+{
+  "url": "http://localhost:8501",
+  "tests": [
+    {
+      "name": "Race Overview - Metrics Display",
+      "page": "Race Overview",
+      "steps": [
+        "Navigate to dashboard",
+        "Select track: barber",
+        "Select race: 1",
+        "Check 4 key metrics displayed",
+        "Verify Total Drivers > 0",
+        "Verify Total Laps > 0",
+        "Verify Top Speed displayed",
+        "Verify Fastest Lap displayed"
+      ]
+    },
+    {
+      "name": "Race Overview - Leaderboard",
+      "page": "Race Overview",
+      "steps": [
+        "Scroll to leaderboard",
+        "Verify table displays",
+        "Check all columns present",
+        "Test sorting functionality"
+      ]
+    },
+    {
+      "name": "Tactical Analysis - Driver Selection",
+      "page": "Tactical Analysis",
+      "steps": [
+        "Navigate to Tactical Analysis",
+        "Select a driver from dropdown",
+        "Verify driver-specific data loads",
+        "Check loading indicator appears"
+      ]
+    },
+    {
+      "name": "Tactical Analysis - Section Heatmap",
+      "page": "Tactical Analysis",
+      "steps": [
+        "Select a driver",
+        "Locate section heatmap",
+        "Verify heatmap displays",
+        "Check tooltips on hover",
+        "Verify legend displays"
+      ]
+    },
+    {
+      "name": "Tactical Analysis - Anomaly Detection",
+      "page": "Tactical Analysis",
+      "steps": [
+        "Scroll to anomaly detection section",
+        "Click Statistical Detection tab",
+        "Verify anomalies listed",
+        "Click ML Detection with SHAP tab",
+        "Wait for analysis",
+        "Verify SHAP explanations available"
+      ]
+    },
+    {
+      "name": "Strategic Analysis - Pit Stop Detection",
+      "page": "Strategic Analysis",
+      "steps": [
+        "Navigate to Strategic Analysis",
+        "Select a driver",
+        "Check pit stop detection section",
+        "Verify pit stops detected",
+        "Check pit stop timeline"
+      ]
+    },
+    {
+      "name": "Strategic Analysis - Bayesian Analysis",
+      "page": "Strategic Analysis",
+      "steps": [
+        "Scroll to Bayesian analysis section",
+        "Verify optimal pit lap displayed",
+        "Check uncertainty percentage",
+        "Verify risk level indicator",
+        "Adjust confidence level slider",
+        "Verify intervals update"
+      ]
+    },
+    {
+      "name": "Integrated Insights - Recommendations",
+      "page": "Integrated Insights",
+      "steps": [
+        "Navigate to Integrated Insights",
+        "Select a driver",
+        "Check combined recommendations",
+        "Verify 3 recommendations displayed",
+        "Check priority levels"
+      ]
+    },
+    {
+      "name": "Integrated Insights - What-If Simulator",
+      "page": "Integrated Insights",
+      "steps": [
+        "Locate what-if simulator",
+        "Adjust section improvement sliders",
+        "Verify results update in real-time",
+        "Check projected lap time improvement",
+        "Check projected position change"
+      ]
+    },
+    {
+      "name": "Cross-Page Data Consistency",
+      "pages": [
+        "Tactical Analysis",
+        "Strategic Analysis",
+        "Integrated Insights"
+      ],
+      "steps": [
+        "Select driver on Tactical Analysis",
+        "Note best lap time",
+        "Navigate to Strategic Analysis",
+        "Verify same driver data matches",
+        "Navigate to Integrated Insights",
+        "Verify consistency"
+      ]
+    }
+  ]
+}

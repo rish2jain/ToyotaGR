@@ -40,17 +40,21 @@ def show_tactical_analysis(data, track, race_num):
     st.title(f"🎯 Tactical Analysis: {track.replace('-', ' ').title()} - Race {race_num}")
 
     try:
-        if 'sections' not in data or data['sections'].empty:
+        if 'sections' not in data or data['sections'] is None or data['sections'].empty:
             st.warning("No section analysis data available for tactical analysis")
             return
 
-        sections_df = data['sections']
+        sections_df = data['sections'].copy()
 
         # Driver selection
         st.header("Driver Selection")
 
-        if 'DRIVER_NUMBER' in sections_df.columns:
-            available_drivers = sorted(sections_df['DRIVER_NUMBER'].unique())
+        # Handle column name with or without leading space - strip whitespace from column names
+        sections_df.columns = sections_df.columns.str.strip()
+        driver_col = 'DRIVER_NUMBER'
+        
+        if driver_col in sections_df.columns:
+            available_drivers = sorted(sections_df[driver_col].unique())
             selected_driver = st.selectbox(
                 "Select Driver",
                 available_drivers,
@@ -60,7 +64,7 @@ def show_tactical_analysis(data, track, race_num):
             st.markdown("---")
 
             # Filter data for selected driver
-            driver_data = sections_df[sections_df['DRIVER_NUMBER'] == selected_driver].copy()
+            driver_data = sections_df[sections_df[driver_col] == selected_driver].copy()
 
             if driver_data.empty:
                 st.warning(f"No data available for driver #{selected_driver}")
@@ -287,7 +291,7 @@ def show_tactical_analysis(data, track, race_num):
                         from src.utils.visualization import create_driver_comparison_map
 
                         # Get comparison driver data
-                        compare_data = sections_df[sections_df['DRIVER_NUMBER'] == compare_driver].copy()
+                        compare_data = sections_df[sections_df[driver_col] == compare_driver].copy()
 
                         if not compare_data.empty and available_section_cols:
                             # Prepare data for both drivers
@@ -945,3 +949,99 @@ def show_tactical_analysis(data, track, race_num):
     except Exception as e:
         st.error(f"Error displaying tactical analysis: {str(e)}")
         st.exception(e)
+
+# Main entry point for Streamlit multi-page app
+# This allows the page to work both when called from app.py and when navigated to directly
+def main():
+    """Main entry point for standalone page execution"""
+    # Try to get data from session state (set by app.py)
+    if 'race_data' in st.session_state:
+        data = st.session_state['race_data']
+        track = st.session_state.get('track', 'barber')
+        race_num = st.session_state.get('race_num', 1)
+        show_tactical_analysis(data, track, race_num)
+    else:
+        # Fallback: load data directly (for direct navigation)
+        try:
+            # Define load_race_data function locally to avoid import issues
+            @st.cache_data
+            def load_race_data_local(track="barber", race_num=1):
+                """Load race data from CSV files"""
+                try:
+                    from pathlib import Path
+                    base_path = Path(__file__).parent.parent.parent / "Data"
+                    track_map = {
+                        "barber": "barber",
+                        "cota": "COTA",
+                        "sonoma": "Sonoma",
+                        "indianapolis": "indianapolis",
+                        "road-america": "road-america/Road America",
+                        "sebring": "sebring/Sebring"
+                    }
+                    track_folder = track_map.get(track.lower(), "barber")
+                    
+                    if track.lower() in ["barber", "cota", "sonoma"]:
+                        if track.lower() == "barber":
+                            race_folder = base_path / track_folder
+                        else:
+                            race_folder = base_path / track_folder / f"Race {race_num}"
+                    else:
+                        race_folder = base_path / track_folder / f"Race {race_num}"
+                    
+                    data = {}
+                    results_files = list(race_folder.glob("03_*Results*.CSV")) + list(race_folder.glob("03_*Results*.csv"))
+                    if results_files:
+                        data['results'] = pd.read_csv(results_files[0], delimiter=';')
+                    
+                    section_files = list(race_folder.glob("23_*Sections*.CSV")) + list(race_folder.glob("23_*Sections*.csv"))
+                    if section_files:
+                        data['sections'] = pd.read_csv(section_files[0], delimiter=';')
+                    
+                    lap_files = list(race_folder.glob("*lap_time*.csv"))
+                    if lap_files:
+                        data['lap_times'] = pd.read_csv(lap_files[0])
+                    
+                    best_lap_files = list(race_folder.glob("99_*Best*.CSV")) + list(race_folder.glob("99_*Best*.csv"))
+                    if best_lap_files:
+                        data['best_laps'] = pd.read_csv(best_lap_files[0], delimiter=';')
+                    
+                    weather_files = list(race_folder.glob("26_*Weather*.CSV")) + list(race_folder.glob("26_*Weather*.csv"))
+                    if weather_files:
+                        data['weather'] = pd.read_csv(weather_files[0], delimiter=';')
+                    
+                    return data
+                except Exception as e:
+                    st.error(f"Error loading data: {str(e)}")
+                    return {}
+            
+            load_race_data = load_race_data_local
+            
+            # Sidebar for track/race selection
+            st.sidebar.subheader("Race Selection")
+            track = st.sidebar.selectbox(
+                "Select Track",
+                ["barber", "cota", "sonoma", "indianapolis", "road-america", "sebring"],
+                format_func=lambda x: x.replace("-", " ").title(),
+                key="tactical_track"
+            )
+            
+            race_num = st.sidebar.selectbox(
+                "Select Race",
+                [1, 2],
+                key="tactical_race"
+            )
+            
+            with st.spinner("Loading race data..."):
+                data = load_race_data(track, race_num)
+            
+            if data:
+                show_tactical_analysis(data, track, race_num)
+            else:
+                st.error("Failed to load race data. Please check the data directory.")
+        except Exception as e:
+            st.error(f"Error loading page: {str(e)}")
+            st.exception(e)
+
+# Run main if this is executed as a script (for Streamlit multi-page)
+if __name__ == "__main__":
+    main()
